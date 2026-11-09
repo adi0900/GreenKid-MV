@@ -17,7 +17,7 @@ The engine includes upstream shader-synchronization corrections, frame buffering
 
 ## Features
 
-- A Mac window for choosing your dump folder and following the build log.
+- A Mac window for choosing your game folder and following the build log.
 - A bundled, pinned engine source snapshot and its existing compiler tools; the launcher contains no playable game.
 - Full local shader and pipeline preparation rather than a reduced first-area shader set.
 - Normal Ocarina rendering at 1280×720, or the lighter upstream preset at 960×540 with upscaling.
@@ -25,21 +25,21 @@ The engine includes upstream shader-synchronization corrections, frame buffering
 - Separate writable engine and Python tools under `~/Library/Application Support/GreenKid-MV/`; building does not modify the signed launcher.
 - Content checks and Git ignore rules that keep private game outputs out of source packages.
 
-## Installing
+## Setup and running
 
-1. Get the `GreenKid-MV-<version>-macOS-arm64.zip` launcher from this project’s release files and unzip it.
-2. Move **GreenKid-MV.app** to Applications and open it. Preview builds are ad-hoc signed, not notarized; macOS may require you to approve opening the app and accessing the folder you select.
-3. Install the prerequisites below, then choose a folder containing your own dump. Keep that folder outside any Git repository.
-4. Choose Normal or the lighter performance preset, then select **Build My Local Game**.
-5. When the log reports completion, select **Show Private Output** and open `Game.app`.
+Follow these steps in order. Steps 1–3 are one-time setup. You need your own game file before step 4: GreenKid-MV does not include, download or point to one.
 
-The first full game build can take an hour or longer. Later builds reuse matching outputs. The launcher downloads Python and Python dependencies on first use through `uv`; it does not download a game or console keys.
+### 1. Check your Mac
 
-### Requirements
+- An Apple silicon Mac (M1 or newer) with **at least 16 GB of memory**.
+- **macOS 26.6 or later.** (The builder window opens on macOS 15+, but building and playing need 26.6.)
+- **About 100 GB of free disk space** for your game file, the build, its caches and the finished game app.
 
-- An Apple silicon Mac. The launcher itself targets macOS 15+, but building and playing through the pinned engine requires **macOS 26.6 or later**, **Xcode 27.2**, and its Metal Toolchain.
-- At least 16 GB RAM for the Ocarina workflow. Allow substantial free disk space: a full dump, build, caches and resulting game app can together occupy 100 GB or more.
-- Homebrew and the tools below. Open Xcode once and complete its initial setup.
+### 2. Install the tools (once)
+
+1. Install **Xcode 27.2** from the App Store or Apple's developer site. Open it once and let it finish its first-time setup.
+2. Install [Homebrew](https://brew.sh) if you don't have it.
+3. Open **Terminal** and run:
 
 ```sh
 brew install uv xcodegen zstd glslang
@@ -47,7 +47,86 @@ brew install --cask dotnet-sdk
 xcodebuild -downloadComponent MetalToolchain
 ```
 
-The engine checks the selected Metal compiler. Fix a toolchain mismatch rather than bypassing that check. Switch 2 NUP inputs do not require `prod.keys`; other engine workflows have their own requirements in the upstream documentation.
+To confirm everything is in place, run the builder's check (adjust the path if the app isn't in Applications):
+
+```sh
+bash /Applications/GreenKid-MV.app/Contents/Resources/engine/scripts/greenkid_build.sh --doctor
+```
+
+It should end with `Prerequisite executables found.` Otherwise it names what is missing.
+
+### 3. Get GreenKid-MV
+
+1. From this project's [Releases](https://github.com/adi0900/GreenKid-MV/releases), download `GreenKid-MV-<version>-macOS-arm64.zip` (and `SHA256SUMS.txt` if you want to check the download with `shasum -a 256 -c SHA256SUMS.txt`).
+2. Unzip it and move **GreenKid-MV.app** to **Applications**.
+3. The first time, **right-click the app → Open → Open**. Preview builds are not notarized, so a normal double-click is blocked once. If macOS still refuses, open **System Settings → Privacy & Security** and choose **Open Anyway**.
+
+### 4. Prepare your game folder
+
+1. Create a new, empty folder, for example `~/Games/Ocarina`.
+2. Put **your own copy** of Ocarina of Time (Switch 2) in it, either as:
+   - the game's single `.nup` file, **or**
+   - the game's NSP file(s): the base game plus **update v131072**.
+
+   This preview is built and tested only for update `v131072`.
+3. Keep the folder **outside any Git repository** and outside the GreenKid-MV source. The builder refuses those locations so that game files can't be published by accident. Avoid iCloud-synced folders: the build writes tens of gigabytes.
+
+### 5. Build your game
+
+1. Open **GreenKid-MV** and click **Choose Game Folder…**. Select the folder from step 4 (the folder itself, not the file inside it).
+2. Pick the picture quality:
+   - **Ticked (default): "Prefer the lighter Zelda performance preset"** draws at 960×540 and upscales. It is easier on the Mac and the best choice for base models.
+   - **Unticked: Normal** draws at 1280×720 and looks sharper, but needs more GPU.
+
+   You can rebuild later with the other choice.
+3. Click **Build My Local Game**. The log shows each stage.
+   - The **first build takes an hour or more**: it translates and prepares every shader of the game on your Mac. Keep the Mac plugged in and awake. The window won't let you quit halfway.
+   - The first run also installs a private Python into `~/Library/Application Support/GreenKid-MV/`. It downloads Python packages only, never game files or keys.
+4. When the status line says **"Local build ready"**, the log ends with `READY:` and the path of your game app.
+
+Building again later reuses everything that is still valid, so it is much faster.
+
+### 6. Play
+
+1. Click **Show Private Output**. It opens `GreenKid-MV-local` inside your game folder.
+2. Open **Game.app**. The first time, **right-click → Open**, as in step 3. If macOS asks whether the app may access a folder (for example Downloads or Documents), click **Allow**: the game needs it for its files and saves.
+3. A settings window appears before the game starts. Then play with the **keyboard or a controller**. Xbox, PlayStation and most Bluetooth pads work.
+4. **Quit** with **⌘Q**, or hold the controller's **Home** button for 2 seconds and press **A**. Progress the game hasn't saved is lost, so save in-game first.
+
+Tips for smooth play:
+
+- Play **in a window** and keep the game window **visible**. Don't cover it or drag it between screens while playing.
+- Short stutters the **first time** you see a new area are normal: the game prepares those graphics once and remembers them.
+- Close heavy apps and keep the Mac on power. Don't build and play at the same time.
+- On an external display, a 120 Hz or 60 Hz refresh rate paces more evenly than 144 Hz in a window.
+
+### Where things are
+
+| What | Where |
+|---|---|
+| Your game app (private, contains your game) | `<game folder>/GreenKid-MV-local/Game.app` |
+| Build log | `<game folder>/GreenKid-MV-local/build.log` |
+| Settings chosen for your build | `<game folder>/GreenKid-MV-local/runtime.env` |
+| Game settings file (overrides) | `~/Library/Application Support/nxnative/0400486024DEC000/env.txt` |
+| Game log (attach to bug reports) | `~/Library/Logs/nxnative/0400486024DEC000.log` |
+| Builder's engine copy and Python | `~/Library/Application Support/GreenKid-MV/` |
+
+**Never upload `Game.app`, the `GreenKid-MV-local` folder, your game file or your saves.** They contain game material.
+
+### Troubleshooting
+
+| Message or problem | What to do |
+|---|---|
+| `Missing prerequisite: …`, `uv is missing` or `The .NET SDK is missing` | Redo step 2, then run the `--doctor` check. |
+| `Install Xcode 27.2 and its Metal Toolchain` or a Metal compiler version error | Install exactly Xcode 27.2, open it once, run `xcodebuild -downloadComponent MetalToolchain`. Don't bypass the version check. |
+| `Choose a game folder outside a Git repository` / `Keep game files outside the builder source` | Move your game folder somewhere else (step 4). |
+| `The supported Ocarina of Time v131072 RomFS image was not found` | The folder doesn't contain update **v131072**. This preview supports only that update. |
+| `Builder files are missing` | Download the full ZIP again from Releases and replace the app. |
+| The app or game won't open ("cannot be opened" / "unidentified developer") | Right-click → **Open**, or **System Settings → Privacy & Security → Open Anyway**. |
+| Black window | Keep the window visible and in front; don't switch to fullscreen. If it stays black, quit and reopen. |
+| Low frame rate | Rebuild with the performance preset ticked, close other apps, plug in power. |
+
+Open an issue with your Mac model, macOS version, which preset you used, and the game log. Never attach game files, saves or keys.
 
 ## What belongs on GitHub
 
