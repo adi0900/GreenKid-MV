@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Ampere ALU instructions through the offline translator (dmsh_xlate, arch sm86), on registers the translator cannot fold, their result stored to shared memory so
-that it is kept: BREV, BMSK, F2IP, UIMAD with an immediate in C, and HADD2 / HMUL2 with an immediate (test_dmsh_ampere_mem.py's Pokopia class has those two on constants, a negative immediate's sign, F2FP.MERGE_C,
+that it is kept: BREV, and HADD2 / HMUL2 with an immediate (test_dmsh_ampere_mem.py's Pokopia class has those two on constants, a negative immediate's sign, F2FP.MERGE_C,
 F2I from a half, UP2UR, MEMBAR and ERRBAR). Needs DMSH_TEST_XLATE (the translator) like the other translator tests."""
 import re, sys, unittest
 from pathlib import Path
@@ -10,7 +10,6 @@ from test_dmsh_ampere_mem import EXIT, Translated, inst
 STORE = (0x000fe8000000c800, 0x0000080609008388)   # STS.U32 [R9 * 16 + 8], R6 (Mario Kart World f94552a2a2bff505): the sink, R9 the thread index
 
 
-def uldc(ur, bank, offset): return (0x000fe20000000800, 0x7ab9 | ur << 16 | offset << 38 | bank << 54)   # ULDC URd, c[bank][offset]
 def waiting(i): return (i[0] | 0x3f << 52, i[1])   # the instruction waits on every scoreboard (control bits 116..121): it reads what an S2R before it wrote
 def s2r_tid(rd): return (0x000e260000002100, 0x0000000000007919 | rd << 16)   # S2R Rd, SR_TID.X (Mario Kart World's encoding, write barrier 0)
 
@@ -23,11 +22,89 @@ class Alu(Translated):
         return self.translate(pre + body + inst(*waiting(STORE)) + inst(*EXIT), shared=0x1000)
 
 
+class FloatRed(Translated):
+    """RED.F32.FTZ.RN (0x98e, type 3 at bits 73..76, add): agl's scene analysis sums luminance with it (Ocarina of Time's probe_analyze 6e28359aa3558f61). Dropped with a log line, the exposure the CPU
+    reads back from those buffers was several times too bright. A compare-and-swap loop on the word"""
+    RED = (0x000fe20000000000 | 3 << 9, 0x0000000608ff098e)   # RED.F32.FTZ.RN [R8], R6: (control and type, opcode and registers)
+
+    def test_adds_in_a_loop(self):
+        msl = self.translate(b''.join(inst(*waiting(i)) for i in (s2r_tid(6), s2r_tid(8), s2r_tid(9), self.RED)) + inst(*EXIT))
+        self.assertIn('atomic_compare_exchange_weak_explicit', msl)
+        self.assertNotIn('atomic_fetch_add', msl)
+
+
+class DeadChannel(Translated):
+    """An image read whose .x is dead and whose .y is used: the optimizer's RemoveNode followed the read as if it were removed, so the chain computing its coordinate lost its last use and went, and the
+    shader read an uninitialized variable (Ocarina of Time's wind solver 04942f42cae10d0f, the encodings below are from it: its velocity field oscillated and the grass flickered at 10 Hz)"""
+    Y_MINUS_1 = (0x000fe40007ffe0ff, 0xffffffff01077810)   # IADD R7, R1, -1
+    SULD = (0x000f6200001e0300, 0x6000080006047b97)        # SULD.XY R4, [R6, R7]: R5 is .y
+    STORE_Y = (STORE[0], 0x0000080509008388)               # STS.U32 [R9 * 16 + 8], R5
+
+    def test_coordinate_survives(self):
+        msl = self.translate(b''.join(inst(*waiting(i)) for i in (s2r_tid(1), s2r_tid(6), s2r_tid(9), self.Y_MINUS_1, self.SULD, self.STORE_Y)) + inst(*EXIT), shared=0x1000)
+        self.assertRegex(msl, r'\+ \(-1\)|- 1\b')
+        self.assertNotRegex(msl, r'(?m)^\s+int (_\d+);\n\s+int _\d+ = \1;')
+
+
 class Brev(Alu):
     BREV = (0x001e240000000000, 0x0000001300067301)   # BREV R6, R19 (Pokémon Pokopia 6e8db04c25a53d8c, whose destination is R3)
 
     def test_reverses_the_bits(self):
         self.assertIn('reverse_bits', self.kept(self.BREV, srcs=(19,)))
+
+
+class F2ip(Alu):
+    """F2IP.U8 (0x243): Ocarina of Time's FoliageShader 83df46a0b1b379b4 packs colour with it, its foliage mesh shaders one byte at a time"""
+    PAIR = (0x000fc400000004ff, 0x000000152c067243)   # F2IP.U8 R6, R44, R21
+    ONE = (0x000fe4000000c4ff, 0x00000009ff067243)    # F2IP.U8.TRUNC R6, RZ, R9
+
+    def test_packs_two_bytes(self):
+        msl = self.kept(self.PAIR, srcs=(44, 21))
+        self.assertIn('rint(', msl)
+        self.assertIn('255.0', msl)
+
+    def test_truncates(self):
+        self.assertIn('trunc(', self.kept(self.ONE, srcs=(9,)))
+
+
+class CarriesAndModifiers(Alu):
+    """Constant inputs the translator folds, the result stored: IADD3's two carry predicates (sum >= 2^32 and sum >= 2 * 2^32, Mesa NAK's OpIAdd3 fold, checked on
+    hardware), PLOP3's second table on the sources as they were, POPC / FLO with an immediate whose top bit (63) is no bitwise not, LEA.HI.SX32's sign-extended high
+    word and LEA's negated B (~B + 1 with its carry; with .X the bitwise not). Encodings built for the test, each checked with nvdisasm 13.5 (sm_86)"""
+    SEL_P0 = (0x000fc200040000ff, 0x00000001ff067807)   # SEL R6, RZ, 0x1, !P0: R6 = P0 ? 1 : 0
+
+    def stored(self, *code):
+        m = re.findall(r'\] = (\w+);', self.kept(*code))
+        return m[-1] if m else None
+
+    def test_popc_immediate_top_bit_is_no_not(self):
+        self.assertEqual(self.stored((0x000fc20000000000, 0x800000ffff067909)), '9u')    # POPC R6, 0x800000ff
+
+    def test_flo_immediate_top_bit_is_no_not(self):
+        msl = self.kept((0x000fc200000e0000, 0x800400ffff067900))                         # FLO.U32 R6, 0x800400ff
+        self.assertIn('spvFindUMSB(2147746047u)', msl)                                    # 0x800400ff itself, not its bitwise not
+
+    def test_iadd3_carry_of_two_sets_both_predicates(self):
+        iadd3 = (0x000fc2000791e9ff, 0xffffffffff077810)                                  # IADD3 R7, P0, P1, -RZ, -0x1, -RZ: 2^32 + 0xffffffff + 2^32
+        self.assertEqual(self.stored(iadd3, self.SEL_P0), '1u')
+
+    def test_plop3_second_table_reads_the_old_source(self):
+        isetp = (0x000fc20003f42070, 0x000000ffff00720c)                                  # ISETP.EQ.U32.AND P2, PT, RZ, RZ, PT: P2 = true
+        plop3 = (0x000fc2000104e070, 0x0000000000f0781c)                                  # PLOP3.LUT P2, P0, P2, PT, PT, 0x0, 0xf0: P2 = false, P0 = the old P2
+        self.assertEqual(self.stored(isetp, plop3, self.SEL_P0), '1u')
+
+    def test_lea_hi_sx32_sign_extends(self):
+        mov = (0x000fc20000000fff, 0x80000000ff057802)                                    # MOV R5, 0x80000000
+        lea = (0x000fc200078f0aff, 0x000000ff05067211)                                    # LEA.HI.SX32 R6, R5, RZ, 0x1: (0xffffffff:R5) >> 31
+        self.assertEqual(self.stored(mov, lea), '4294967295u')
+
+    def test_lea_negated_zero_b_carries(self):
+        lea = (0x000fc200078000ff, 0x800000ffff067211)                                    # LEA R6, P0, RZ, -RZ, 0x0: ~0 + 1 carries out
+        self.assertEqual(self.stored(lea, self.SEL_P0), '1u')
+
+    def test_lea_x_not_b(self):
+        lea = (0x000fc200038e04ff, 0x800000ffff067211)                                    # LEA.X R6, RZ, ~RZ, 0x0, PT: 0 + 0xffffffff + 1
+        self.assertEqual(self.stored(lea), '0u')
 
 
 class HalfImmediate(Alu):
@@ -45,6 +122,122 @@ class HalfImmediate(Alu):
         msl = self.kept(self.HMUL2, srcs=(6,))
         self.assertIn('spvFMul', msl)
         self.assertRegex(msl, r'\b2\.0\b')
+
+
+class GlobalMemory(Alu):
+    """Global memory. desc[URb][Ra.64] (bit 76 of LDG / STG, bit 71 of ATOMG / RED; nvdisasm): URb is a memory descriptor, not part of the address, which is Ra.64 (plus the offset)
+    alone; [Ra.64+URb] adds it. The descriptor's value was added to the address. ATOMG.CAS (0x3a9) was refused; ATOMG / RED INC and DEC had no case in EmitAtomicOp (the operation
+    vanished). A GPU cross-check of 300 LDG / STG / ATOMG / RED through the host's gmem_map (one-thread compute shaders, production options): 135 identical to 300. Encodings
+    built from the sm_86 oracle corpus and checked with nvdisasm"""
+    R2UR = (0x000fe200000e0000, 0x00000000130473c2)       # R2UR UR4, R19
+    LDG_DESC = (0x000fe2200c1e1900, 0x0000000414067981)   # LDG.E R6, desc[UR4][R20.64]
+    LDG_URZ = (0x000fe2200c1e1900, 0x0000003f14067981)    # LDG.E R6, desc[URZ][R20.64]
+    CAS = (0x000fe200001ee116, 0x00000013140673a9)        # ATOMG.E.CAS.STRONG.GPU PT, R6, [R20], R19, R22
+    INC = (0x000fe200019ee100, 0x00000013140673a8)        # ATOMG.E.INC.STRONG.GPU PT, R6, [R20], R19
+
+    def test_a_descriptor_is_not_an_offset(self):   # the same code whatever the descriptor register holds
+        self.assertEqual(self.kept(self.R2UR, self.LDG_DESC, srcs=(19, 20, 21)), self.kept(self.R2UR, self.LDG_URZ, srcs=(19, 20, 21)))
+
+    def test_atomg_cas_is_translated(self):
+        self.assertIn('atomic_compare_exchange', self.kept(self.CAS, srcs=(19, 20, 21, 22)))
+
+    def test_atomg_inc_is_a_compare_and_swap_loop(self):
+        self.assertIn('atomic_compare_exchange', self.kept(self.INC, srcs=(19, 20, 21)))
+
+
+
+class SharedAtomics(Alu):
+    """ATOMS.INC / ATOMS.DEC (operations 3 and 4) had no case in EmitAtomicOp: the result was the constant 0 and shared memory was not touched. They are a compare-and-swap loop.
+    ATOMS.CAS with bit 87 clear is CUDA's atomicCAS: Rd is the old value; CAST (87) and CAST.SPIN (87, 88) keep Rd = 1 when the swap happened. A GPU cross-check of 400 shared
+    accesses against a reference (one thread, production options): INC / DEC / CAS 84 mismatches, none with the fix. Encodings built from the sm_86 oracle corpus, checked with nvdisasm"""
+    INC = (0x000fe20001800000, 0x000000141306738c)    # ATOMS.INC R6, [R19], R20
+    DEC = (0x000fe20002000000, 0x000000141306738c)    # ATOMS.DEC R6, [R19], R20
+    CAS = (0x000fe20000000015, 0x000000141306738d)    # ATOMS.CAS R6, [R19], R20, R21
+    SPIN = (0x000fe20001800015, 0x000000141306738d)   # ATOMS.CAST.SPIN R6, [R19], R20, R21
+
+    def test_inc_is_a_compare_and_swap_loop(self):
+        self.assertIn('atomic_compare_exchange', self.kept(self.INC, srcs=(19, 20)))
+
+    def test_dec_is_a_compare_and_swap_loop(self):
+        self.assertIn('atomic_compare_exchange', self.kept(self.DEC, srcs=(19, 20)))
+
+    def test_cas_gives_the_old_value(self):   # the success test of CAST.SPIN is not there
+        cas, spin = self.kept(self.CAS, srcs=(19, 20, 21)), self.kept(self.SPIN, srcs=(19, 20, 21))
+        self.assertIn('atomic_compare_exchange', cas)
+        success = r'bool _\d+ = int\(_\d+\) =='   # the old value compared with the expected one (not the swap loop's own test)
+        self.assertRegex(spin, success)
+        self.assertNotRegex(cas, success)
+
+
+class HalfSwizzle(Alu):
+    """A half-pair operand's swizzle (A 74..75, the 32 slot 60..61, the 64 slot 81..82: 0 as is, 1 .F32, 2 .H0_H0, 3 .H1_H1) applies to a constant too: nvdisasm prints
+    HMUL2 R37, R37.H0_H0, c[0x0] [0x168].H0_H0 (bits 60..61 = 2), a half scaled by one half of a uniform. Read as is, the high lane took the constant's other half.
+    Value 1 is .F32, the 32-bit float itself in both lanes (nvdisasm: R20.F32), not .H1_H1. Encodings from the sm_86 oracle corpus, registers renamed"""
+    C_H0 = (0x000fe20000000800, 0x20005a0013067a32)    # HMUL2 R6, R19.H0_H0, c[0x0] [0x168].H0_H0
+    C_H1 = (0x000fe20000000c00, 0x30005a0013067a32)    # HMUL2 R6, R19.H1_H1, c[0x0] [0x168].H1_H1
+    F32 = (0x000fe20000000800, 0x1000001413067232)     # HMUL2 R6, R19.H0_H0, R20.F32
+    LANE = re.compile(r'float2\(as_type<half2>\([^;]*?\)\)\.([xy])')
+
+    def lanes(self, *code, srcs=(19,)):
+        msl = self.kept(*code, srcs=srcs)
+        return msl, set(self.LANE.findall(msl))
+
+    def test_constant_low_half_in_both_lanes(self):
+        msl, read = self.lanes(self.C_H0)
+        self.assertEqual(read, {'x'}, msl)   # A and the constant: their low halves only
+
+    def test_constant_high_half_in_both_lanes(self):
+        msl, read = self.lanes(self.C_H1)
+        self.assertEqual(read, {'y'}, msl)
+
+    def test_f32_operand_is_the_float(self):
+        msl, read = self.lanes(self.F32, srcs=(19, 20))
+        self.assertEqual(msl.count('as_type<half2>'), 1, msl)   # A's unpack alone: R20 is used as a float, not split into halves
+        self.assertEqual(read, {'x'}, msl)
+
+
+class HalfCompareFtz(Alu):
+    """HSETP2 / HSET2 .FTZ (bit 80): a subnormal half compares as zero, as FSETP.FTZ's float does (CompareFtz). The lanes are unpacked to 32-bit floats, where a half's
+    subnormals are normal, so the half's own bound (2^-14) flushes them. Encodings built from the sm_86 oracle corpus and checked with nvdisasm"""
+    HSETP2 = (0x000fca0003f14000, 0x0000001413007234)      # HSETP2.GT.FTZ.AND P0, PT, R19, R20, PT
+    HSETP2_NO = (0x000fca0003f04000, 0x0000001413007234)   # HSETP2.GT.AND P0, PT, R19, R20, PT
+    HSET2 = (0x000fe20003814080, 0x0000001413067233)       # HSET2.BF.GT.FTZ.AND R6, R19, R20, PT
+    BOUND = re.compile(r'6\.10351\d*e-05')
+
+    def test_hsetp2_flushes_both_operands(self):   # only P0 (the low lanes) is read: the high lanes' comparison goes to PT and is dropped with its flushes
+        msl = self.kept(self.HSETP2, (0x000fe40000000000, 0x0000001413067208), srcs=(19, 20))
+        self.assertEqual(len(self.BOUND.findall(msl)), 2, msl)
+
+    def test_hset2_flushes_both_lanes_of_both_operands(self):
+        msl = self.kept(self.HSET2, srcs=(19, 20))
+        self.assertEqual(len(self.BOUND.findall(msl)), 4, msl)
+
+    def test_without_ftz_compares_as_is(self):
+        self.assertFalse(self.BOUND.search(self.kept(self.HSETP2_NO, (0x000fe40000000000, 0x0000001413067208), srcs=(19, 20))))
+
+
+class DirectedRounding(Alu):
+    """I2F (32-bit source, 32-bit float) and F2F.F16.F32 with .RM / .RP / .RZ (78..79): the result rounded to nearest is compared with the exact value and stepped to
+    its neighbour. The compiler's 32-bit division starts with I2F.U32.RP; rounded to nearest, a value above 2^24 came out one ulp off in about half the cases (a GPU
+    cross-check against an exact reference: 45 mismatches in 300 I2F, none with the fix). Encodings built from the sm_86 oracle corpus and checked with nvdisasm"""
+    I2F_RP = (0x000fe20000209000, 0x0000001300067306)     # I2F.U32.RP R6, R19
+    I2F_RN = (0x000fe20000201000, 0x0000001300067306)     # I2F.U32 R6, R19
+    F2F_RP = (0x000fe20000208800, 0x0000001300067304)     # F2F.F16.F32.RP R6, R19
+    F2F_RN = (0x000fe20000200800, 0x0000001300067304)     # F2F.F16.F32 R6, R19
+
+    def test_i2f_rp_checks_against_the_integer(self):
+        msl = self.kept(self.I2F_RP, srcs=(19,))
+        self.assertIn('4294967296', msl)                     # the bound above which the rounded float is above every u32
+        self.assertRegex(msl, r'as_type<int>\(_\d+\) \+ 1\b')   # the float's bits stepped up
+
+    def test_i2f_to_nearest_is_plain(self):
+        self.assertNotIn('4294967296', self.kept(self.I2F_RN, srcs=(19,)))
+
+    def test_f2f_rp_reads_the_half_back(self):   # through a mask: an unpack of the pack would be folded into the float itself (PropagatePack)
+        self.assertIn('& 65535', self.kept(self.F2F_RP, srcs=(19,)))
+
+    def test_f2f_to_nearest_is_plain(self):
+        self.assertNotIn('& 65535', self.kept(self.F2F_RN, srcs=(19,)))
 
 
 class CompareFtz(Alu):
@@ -68,75 +261,6 @@ class CompareFtz(Alu):
     def test_against_zero_flushes_one(self):
         self.assertEqual(self.kept((self.FSETP[0], 0x000000ff1300720b), self.FSEL, srcs=(19, 20)).count(self.FLUSH), 1)
 
-
-def s2r(rd, sr): return (0x000e260000000000 | sr << 8, 0x0000000000007919 | rd << 16)   # S2R Rd, SR (0x21 SR_TID.X, 0x25 SR_CTAID.X)
-
-
-class F2ip(Alu):
-    """F2IP.U8.F32.NTZ Rd, a, b, RZ (0x243): each float rounded to the nearest integer, saturated to a byte and NaN to 0, b in byte 0 and a in byte 1. The Legend of Zelda:
-    Ocarina of Time's colour converter 99951da6e5cd38f5 has F2IP R22, R13, R12, RZ at +0x530; here it is on R6, R4, R5"""
-    GAME = (0x000fe200000004ff, 0x0000000c0d167243)
-    F2IP = (GAME[0], GAME[1] & ~0xffffffff0000 | 6 << 16 | 4 << 24 | 5 << 32)
-
-    def msl(self):   # a (R4) from SR_TID.X, b (R5) from SR_CTAID.X
-        return self.kept(s2r(4, 0x21), s2r(5, 0x25), self.F2IP)
-
-    def test_rounds_saturates_and_drops_nan(self):
-        msl = self.msl()
-        self.assertEqual(len(re.findall(r'\brint\(', msl)), 2, msl)   # ties to even
-        self.assertEqual(len(re.findall(r'\bisnan\(', msl)), 2, msl)
-        self.assertEqual(len(re.findall(r'\bmin\([^;]*255\.0\)', msl)), 2, msl)
-
-    def test_a_is_the_high_byte(self):
-        msl = self.msl()
-        defs = dict(re.findall(r'^\s*\w+ (_\d+) = (.*);$', msl, re.M))
-        def source(v, seen=()):   # the shader inputs a value is computed from
-            return set().union(*(source(u, seen + (v,)) for u in re.findall(r'_\d+', defs.get(v, '')) if u not in seen),
-                               set(re.findall(r'gl_\w+', defs.get(v, ''))))
-        high, low = re.search(r'(_\d+) << 8;', msl).group(1), re.search(r'= _\d+ \| (_\d+);', msl).group(1)
-        self.assertEqual(source(high), {'gl_LocalInvocationID'}, msl)
-        self.assertEqual(source(low), {'gl_WorkGroupID'}, msl)
-
-    def test_other_encodings_are_refused(self):
-        for hi in (self.F2IP[0] & ~0xffffff00, self.F2IP[0] | 1 << 8, self.F2IP[0] & ~0xff | 7, self.F2IP[0] | 1 << 16):   # bit 74 clear, 72 set (signed), C = R7, 80 set
-            with self.subTest(hi=hex(hi)), self.assertRaises(AssertionError):
-                self.kept(s2r(4, 0x21), (hi, self.F2IP[1]))
-
-
-class F2ipTruncate(Alu):
-    """F2IP.U8.F32.NTZ.TRUNC Rd, RZ, b, RZ (78..79 = 3, F2I's rounding field): Ocarina of Time's foliage mesh shader 740e2b04db624fb1 has F2IP R5, RZ, R5, RZ at +0x370, a
-    colour channel times 255 that it then shifts by 16 into an RGBA8 word; here it is on R6 and R5. The other rounding modes are the same field (no game encoding met)"""
-    GAME = (0x000fe4000000c4ff, 0x00000005ff057243)
-    F2IP = (GAME[0], GAME[1] & ~0xff0000 | 6 << 16)
-
-    def msl(self, hi=GAME[0]):   # b (R5) from SR_CTAID.X
-        return self.kept(s2r(5, 0x25), (hi, self.F2IP[1]))
-
-    def test_truncates_b_into_byte_0(self):
-        msl = self.msl()
-        self.assertEqual(len(re.findall(r'\btrunc\(', msl)), 1, msl)
-        self.assertNotIn('rint(', msl)
-        self.assertEqual(len(re.findall(r'\bisnan\(', msl)), 1, msl)
-        self.assertEqual(len(re.findall(r'\bmin\([^;]*255\.0\)', msl)), 1, msl)
-        self.assertNotRegex(msl, r'<< 8;')   # a = RZ: byte 1 stays zero
-
-    def test_floor_and_ceiling(self):
-        for mode, fn in ((1, 'floor'), (2, 'ceil')):
-            with self.subTest(mode=mode):
-                msl = self.msl(self.GAME[0] & ~(3 << 14) | mode << 14)
-                self.assertEqual(len(re.findall(rf'\b{fn}\(', msl)), 1, msl)
-                self.assertNotIn('trunc(', msl)
-
-
-class UimadImmediateC(Alu):
-    """UIMAD URd, URa, URb, imm (0x4a4, form 2: the immediate in the C slot): Ocarina of Time's e9213c7fba8ccf93 +0x43c0 UIMAD UR4, UR4, UR6, 0xa, here with UR4 and UR6
-    from c[0], moved to R6"""
-    UIMAD = (0x000fcc000f8e0206, 0x0000000a040474a4)
-    MOV = (0x000fe20000000f00, 0x0000000400067c02)   # MOV R6, UR4
-
-    def test_adds_the_immediate(self):
-        msl = self.kept(uldc(4, 0, 0x40), uldc(6, 0, 0x44), self.UIMAD, self.MOV)
-        self.assertRegex(msl, r'\* as_type<int>\([^;]*\);\s*int _\d+ = _\d+ \+ 10;')
 
 class Vote(Alu):
     """VOTEU (0x886) writes the uniform predicate UPd and leaves the lane predicate of that number alone; VOTE (0x806) writes the lane predicate. nvdisasm reads 0x886 as

@@ -1,10 +1,6 @@
 // Virtual gamepad (Nintendo button positions) + physical controllers (GameController), handed to the host through dm_input_set and dm_pad_set_player (hle_hid.c, bit layout in dm_input.h).
 //   Two layouts, three in handheld mode, picked in the in-game menu (GameMenu.swift) that the menu button at the top centre (a gear) opens; the choice is kept in NSUserDefaults (each game is its own app, so per game); the first launch uses the game profile's pad_layout (DM_GAME_PAD_LAYOUT).
 //   The menu button stays while a physical controller is connected, so the menu is there in every layout and with every controller.
-//   Native (native, layout 3): a mobile game's layout in very transparent glass, after the mock-up the player chose: a floating left stick (a thumb on the left half holds it,
-//     centred where it lands, or on the drawn ring), the camera (right stick) on any touch of the right half no key takes, and round icon keys whose button letter sits in a small
-//     chip (round for A B X Y + −, square for the shoulders R and ZL): B a sword, A a tap, R a shield, ZL a target, X a jump (two up arrows), Y a grid, + a menu, − a map; the menu button (…) at the top right.
-//     No D-pad, L, ZR, L3 or R3 (the 3D layout has them). Drawn with shape and gradient layers only (no live blur), so it costs the GPU nothing over the picture.
 //   Tap (touch): no control but the menu button, every other touch goes to the game's local touch viewport; offered only while the game is in handheld mode, the only one in which it reads the touch screen (Balatro, played by touch).
 //   2D (simple): top corners ZL above L (one column), ZR above R likewise, teardrops with the tip toward the screen corner; − and + side by side at the top centre; the left stick in the bottom-left corner (fixed ring, tilt measured from the ring centre, small dead zone);
 //     the A (right) B (bottom) X (top) Y (left) diamond in the bottom-right corner, sliding a finger between keys switches keys. Each bottom corner holds a single control, so it sits close in (reaching halfway into the side safe-area inset).
@@ -32,6 +28,7 @@
 #include "motion_fusion.h"
 #include "pad_apple.h"
 #include "pad_slots.h"
+#include "ctrl_prompt.h"
 #include <stdatomic.h>
 #import "DmLayout.h"
 #import "DmGameMenu.h"
@@ -133,11 +130,7 @@ static const CGFloat
     K_RSWIPE = 1.0 / 3,                             // right stick area: this fraction of the screen width from the right edge (not in u)
     K_CLICK_X = 102, K_CLICK_R = 17;                // L3 / R3: centre from the outer edge (level with ZL / ZR), radius
 static const int k_btns[] = {B_ZL, B_L, B_ZR, B_R, B_MINUS, B_PLUS, B_LS, B_RS};   // keys locked at touch-down (L3 / R3 only in the 3D layout)
-static NSString *const k_layout_key = @"DmPadLayout";   // NSUserDefaults: 0 = 2D, 1 = 3D, 2 = Tap, 3 = Native (DM_GAME_PAD_LAYOUT's numbers)
-static NSString *const k_native_key = @"DmPadNativeOffered";   // a profile that starts in Native switches to it once, over a layout saved before Native existed
-// Native layout (in points of an 874 x 402 landscape screen, scaled by gu; x from the corner rectangle's edges, y from its top or bottom): centre, radius
-static const int k_nat[] = {B_B, B_A, B_R, B_ZL, B_X, B_Y, B_PLUS, B_MINUS};
-static const CGFloat N_RING_R = 62, N_KNOB_R = 27, N_STICK_X = 120, N_STICK_Y = 105, N_MENU_X = 80, N_TOP_Y = 32, N_TOP_R = 18;
+static NSString *const k_layout_key = @"DmPadLayout";   // NSUserDefaults: 0 = 2D, 1 = 3D, 2 = Tap (DM_GAME_PAD_LAYOUT's numbers)
 int dm_opmode(void);   // hle_oe.c: 0 = handheld
 
 @interface DmGamepad : UIView
@@ -171,34 +164,9 @@ static void pads_start(void);   // Physical controllers, below
     BOOL _padOff;                                  // a physical controller is connected: every touch goes to the game
     DmLayout _layout;
     UITouch *_game[16];                            // touches on the game's touch screen by finger slot
-    BOOL _native;                                  // the Native layout is current
-    CALayer *_nat, *_nk[B_N]; CAShapeLayer *_nbase[B_N];   // Native: its layers, one glass disc per key and the disc's base (its fill shows the press)
-    CALayer *_nring, *_nknob; CAShapeLayer *_nknobBase;    // Native: the left stick's ring and knob
-    CGPoint _lCentre;                              // Native: the left stick's centre while held (where its touch landed, or the ring)
 }
 
 static UIColor *k_idle, *k_on, *k_line, *k_ringFill, *k_text, *k_textOn;
-// Themes (DM_PAD_THEME, default the profile's pad_theme): each key's own idle / pressed fill, rim and label colours, and the stick's and menu button's. Classic is every key the
-// shared translucent white above; Forest is an original palette after the N64 controller and the woods (blue A, green B, yellow X / Y like C buttons, red +, deep green shoulders,
-// bronze D-pad, gold rims, cream labels), with no game artwork. Every colour keeps its own low opacity, as above, so the picture shows through
-static UIColor *k_kidle[B_N], *k_kon[B_N], *k_kline[B_N], *k_ktext[B_N], *k_ktextOn[B_N], *k_knobIdle, *k_knobOn, *k_knobLine, *k_menuFill, *k_menuLine;
-static UIColor *rgba(uint32_t rgb, CGFloat a) { return [UIColor colorWithRed:((rgb >> 16) & 255) / 255.0 green:((rgb >> 8) & 255) / 255.0 blue:(rgb & 255) / 255.0 alpha:a]; }
-static int pad_theme(void) { const char *e = getenv("DM_PAD_THEME"); return e && *e ? atoi(e) : DM_GAME_PAD_THEME; }   // 0 Classic, 1 Forest
-static void theme_init(void) {
-    for (int b = 0; b < B_N; b++) { k_kidle[b] = k_idle; k_kon[b] = k_on; k_kline[b] = k_line; k_ktext[b] = k_text; k_ktextOn[b] = k_textOn; }
-    k_knobIdle = k_idle; k_knobOn = k_on; k_knobLine = k_line; k_menuFill = k_idle; k_menuLine = k_line;
-    if (pad_theme() != 1) return;
-    const uint32_t gold = 0xd9b45a, cream = 0xf6ecd2, forest = 0x1f4d2b, night = 0x0c1f12;
-    static const uint32_t fill[B_N] = {   // A B X Y L3 R3 L R ZL ZR + − left up right down
-        0x2f62d8, 0x2f9a45, 0xf0c232, 0xf0c232, 0xb08a3a, 0xb08a3a, forest, forest, forest, forest, 0xcc3a30, 0x3c5a44, 0x8a6a3c, 0x8a6a3c, 0x8a6a3c, 0x8a6a3c };
-    for (int b = 0; b < B_N; b++) {
-        int bright = b == B_X || b == B_Y;   // yellow keys: dark labels read better
-        k_kidle[b] = rgba(fill[b], 0.36); k_kon[b] = rgba(fill[b], 0.68); k_kline[b] = rgba(gold, 0.62);
-        k_ktext[b] = bright ? rgba(night, 0.80) : rgba(cream, 0.88); k_ktextOn[b] = rgba(night, 0.85);
-    }
-    k_ringFill = rgba(forest, 0.16); k_knobIdle = rgba(0x2f9a45, 0.36); k_knobOn = rgba(gold, 0.62); k_knobLine = rgba(gold, 0.62);
-    k_menuFill = rgba(forest, 0.32); k_menuLine = rgba(gold, 0.62); k_text = rgba(cream, 0.88);
-}
 static CAShapeLayer *shape(CALayer *parent) {
     CAShapeLayer *l = [CAShapeLayer layer];
     l.fillColor = k_idle.CGColor; l.strokeColor = k_line.CGColor; l.lineWidth = 1.5;
@@ -210,85 +178,6 @@ static CATextLayer *label(CALayer *parent, NSString *s) {
     t.string = s; t.alignmentMode = kCAAlignmentCenter; t.foregroundColor = k_text.CGColor;
     [parent addSublayer:t]; return t;
 }
-// ---- Native layout: glass ----
-// Each control is a disc that lets the picture through: a nearly clear base (its fill turns a light blue while pressed), a soft light from the top, a rim brighter at the upper
-// left, a small highlight near the top, a white icon and the button's letter in a chip. Shape and gradient layers only: no backdrop blur, which would sample the picture every frame
-static UIColor *g_glassIdle, *g_glassOn;
-static UIFont *rounded(CGFloat size) {
-    UIFontDescriptor *d = [[UIFont systemFontOfSize:size weight:UIFontWeightBold].fontDescriptor fontDescriptorWithDesign:UIFontDescriptorSystemDesignRounded];
-    return d ? [UIFont fontWithDescriptor:d size:size] : [UIFont systemFontOfSize:size weight:UIFontWeightBold];
-}
-static CATextLayer *chipText(CALayer *parent, NSString *s, CGPoint c, CGFloat size, CGFloat scale) {
-    CATextLayer *t = [CATextLayer layer]; UIFont *f = rounded(size);
-    t.string = s; t.font = (__bridge CFTypeRef)f; t.fontSize = size; t.alignmentMode = kCAAlignmentCenter; t.contentsScale = scale;
-    t.foregroundColor = [UIColor colorWithWhite:1 alpha:0.95].CGColor;
-    CGFloat h = f.lineHeight, w = size * 3; t.frame = CGRectMake(c.x - w / 2, c.y - h / 2 - f.descender * 0.15, w, h);
-    t.shadowColor = UIColor.blackColor.CGColor; t.shadowOpacity = 0.45; t.shadowRadius = 1.5; t.shadowOffset = CGSizeMake(0, 1);
-    [parent addSublayer:t]; return t;
-}
-// A glass disc of radius r in a layer of its own (bounds 2r, its centre at r, r); *base gets the layer whose fill shows the press
-static CALayer *glassDisc(CGFloat r, CAShapeLayer **base) {
-    CALayer *g = [CALayer layer]; g.bounds = CGRectMake(0, 0, 2 * r, 2 * r);
-    CGRect b = g.bounds; CGPathRef circle = CGPathCreateWithEllipseInRect(b, NULL);
-    CAShapeLayer *bl = [CAShapeLayer layer]; bl.frame = b; bl.path = circle; bl.fillColor = g_glassIdle.CGColor;
-    bl.shadowColor = UIColor.blackColor.CGColor; bl.shadowOpacity = 0.10; bl.shadowRadius = 6; bl.shadowOffset = CGSizeMake(0, 2); bl.shadowPath = circle;
-    [g addSublayer:bl]; if (base) *base = bl;
-    CAGradientLayer *sheen = [CAGradientLayer layer]; sheen.frame = b;   // inner light: a little brighter at the top, a soft shade at the bottom
-    sheen.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.08].CGColor, (id)[UIColor colorWithWhite:1 alpha:0].CGColor, (id)[UIColor colorWithWhite:0 alpha:0.05].CGColor];
-    sheen.locations = @[@0, @0.55, @1];
-    CAShapeLayer *sm = [CAShapeLayer layer]; sm.path = circle; sheen.mask = sm; [g addSublayer:sheen];
-    CAGradientLayer *rim = [CAGradientLayer layer]; rim.frame = b; rim.startPoint = CGPointMake(0.1, 0); rim.endPoint = CGPointMake(0.9, 1);   // specular rim: bright upper left, dim lower right
-    rim.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.62].CGColor, (id)[UIColor colorWithWhite:1 alpha:0.10].CGColor, (id)[UIColor colorWithWhite:1 alpha:0.32].CGColor];
-    rim.locations = @[@0, @0.6, @1];
-    CAShapeLayer *rm = [CAShapeLayer layer]; CGPathRef inset = CGPathCreateWithEllipseInRect(CGRectInset(b, 0.8, 0.8), NULL);
-    rm.path = inset; rm.fillColor = nil; rm.strokeColor = UIColor.blackColor.CGColor; rm.lineWidth = 1.6; rim.mask = rm; [g addSublayer:rim]; CGPathRelease(inset);
-    CAShapeLayer *hl = [CAShapeLayer layer]; hl.frame = b;   // a small highlight near the top
-    CGPathRef hp = CGPathCreateWithEllipseInRect(CGRectMake(r - r * 0.62, r * 0.20, r * 1.24, r * 0.17), NULL); hl.path = hp; CGPathRelease(hp);
-    hl.fillColor = [UIColor colorWithWhite:1 alpha:0.13].CGColor; [g addSublayer:hl];
-    CGPathRelease(circle);
-    return g;
-}
-// The icon: an SF Symbol in white, centred in the disc
-static void glassSymbol(CALayer *g, NSString *name, CGFloat size, CGFloat scale) {
-    UIImage *im = [UIImage systemImageNamed:name withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:size weight:UIImageSymbolWeightSemibold]];
-    if (!im) return;
-    im = [im imageWithTintColor:[UIColor colorWithWhite:1 alpha:0.95] renderingMode:UIImageRenderingModeAlwaysOriginal];
-    UIGraphicsImageRendererFormat *fmt = [UIGraphicsImageRendererFormat preferredFormat]; fmt.scale = scale; fmt.opaque = NO;
-    UIImage *flat = [[[UIGraphicsImageRenderer alloc] initWithSize:im.size format:fmt] imageWithActions:^(UIGraphicsImageRendererContext *c) { (void)c; [im drawAtPoint:CGPointZero]; }];
-    CALayer *l = [CALayer layer]; l.contents = (__bridge id)flat.CGImage; l.contentsScale = scale; l.contentsGravity = kCAGravityResizeAspect;
-    CGSize sz = im.size; CGFloat r = g.bounds.size.width / 2; l.frame = CGRectMake(r - sz.width / 2, r - sz.height / 2, sz.width, sz.height);
-    l.shadowColor = UIColor.blackColor.CGColor; l.shadowOpacity = 0.4; l.shadowRadius = 1.5; l.shadowOffset = CGSizeMake(0, 1);
-    [g addSublayer:l];
-}
-// B's icon: a sword, blade up and to the right
-static void glassSword(CALayer *g, CGFloat s) {
-    CGFloat r = g.bounds.size.width / 2; CGAffineTransform m = CGAffineTransformRotate(CGAffineTransformMakeTranslation(r, r), M_PI_4);
-    CGMutablePathRef p = CGPathCreateMutable();
-    CGPathMoveToPoint(p, &m, 0, -s); CGPathAddLineToPoint(p, &m, s * 0.13, -s * 0.8); CGPathAddLineToPoint(p, &m, s * 0.13, s * 0.35);
-    CGPathAddLineToPoint(p, &m, -s * 0.13, s * 0.35); CGPathAddLineToPoint(p, &m, -s * 0.13, -s * 0.8); CGPathCloseSubpath(p);
-    CGPathAddRect(p, &m, CGRectMake(-s * 0.42, s * 0.35, s * 0.84, s * 0.13));   // the guard
-    CGPathAddRect(p, &m, CGRectMake(-s * 0.08, s * 0.48, s * 0.16, s * 0.36));   // the grip
-    CGPathAddEllipseInRect(p, &m, CGRectMake(-s * 0.13, s * 0.82, s * 0.26, s * 0.26));   // the pommel
-    CAShapeLayer *l = [CAShapeLayer layer]; l.frame = g.bounds; l.path = p; l.fillColor = [UIColor colorWithWhite:1 alpha:0.95].CGColor;
-    l.shadowColor = UIColor.blackColor.CGColor; l.shadowOpacity = 0.4; l.shadowRadius = 1.5; l.shadowOffset = CGSizeMake(0, 1); l.shadowPath = p;
-    CGPathRelease(p); [g addSublayer:l];
-}
-// The button's letter: a small round glass chip at the lower right (face keys, + and −), or a rounded rectangle for a shoulder (R, ZL), so it never reads as a face key
-static void glassChip(CALayer *g, NSString *t, BOOL square, CGFloat scale) {
-    CGFloat r = g.bounds.size.width / 2;
-    if (square) {
-        CGFloat w = t.length > 1 ? 24 : 18, h = 15, cx = r + r * 0.62, cy = r + r * 0.66;
-        CAShapeLayer *c = [CAShapeLayer layer]; CGPathRef p = CGPathCreateWithRoundedRect(CGRectMake(cx - w / 2, cy - h / 2, w, h), 4, 4, NULL);
-        c.path = p; CGPathRelease(p); c.fillColor = [UIColor colorWithWhite:0 alpha:0.26].CGColor; c.strokeColor = [UIColor colorWithWhite:1 alpha:0.7].CGColor; c.lineWidth = 1.2;
-        [g addSublayer:c]; chipText(g, t, CGPointMake(cx, cy), 9.5, scale);
-        return;
-    }
-    CGFloat br = MIN(11.5, MAX(8.5, r * 0.34)), cx = r + r * 0.707 - br * 0.35, cy = r + r * 0.707 - br * 0.35;
-    CALayer *chip = glassDisc(br, NULL); chip.position = CGPointMake(cx, cy);
-    ((CAShapeLayer *)chip.sublayers.firstObject).fillColor = [UIColor colorWithWhite:0 alpha:0.18].CGColor;
-    [g addSublayer:chip]; chipText(g, t, CGPointMake(cx, cy), t.length > 1 ? br * 0.82 : br * 1.05, scale);
-}
-
 static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   // keys shown only in the 3D layout
 
 - (instancetype)initWithFrame:(CGRect)f {
@@ -309,34 +198,29 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             // each colour carries its own low opacity instead of lowering the whole view's alpha (that would add an off-screen pass for the full-screen layer)
             k_idle = [UIColor colorWithWhite:1 alpha:0.14]; k_on = [UIColor colorWithWhite:1 alpha:0.45]; k_line = [UIColor colorWithWhite:1 alpha:0.38];
             k_ringFill = [UIColor colorWithWhite:1 alpha:0.06]; k_text = [UIColor colorWithWhite:1 alpha:0.6]; k_textOn = [UIColor colorWithWhite:0 alpha:0.7];
-            theme_init();
-            g_glassIdle = [UIColor colorWithWhite:1 alpha:0.04]; g_glassOn = [UIColor colorWithRed:0.55 green:0.85 blue:1 alpha:0.20];
         });
         _controls = [CALayer layer]; [self.layer addSublayer:_controls];
         _ring = shape(_controls); _ring.fillColor = k_ringFill.CGColor;
-        _knob = shape(_controls); _knob.strokeColor = k_knobLine.CGColor; _ring.strokeColor = k_knobLine.CGColor;
-        CAShapeLayer *in = [CAShapeLayer layer]; in.fillColor = nil; in.strokeColor = k_knobLine.CGColor; in.lineWidth = 1.5;   // inner ring of the knob
+        _knob = shape(_controls);
+        CAShapeLayer *in = [CAShapeLayer layer]; in.fillColor = nil; in.strokeColor = k_line.CGColor; in.lineWidth = 1.5;   // inner ring of the knob
         [_knob addSublayer:in];
         static NSString *const names[B_N] = {@"A", @"B", @"X", @"Y", @"L3", @"R3", @"L", @"R", @"ZL", @"ZR", @"+", @"−"};
         for (int b = 0; b < B_N; b++) {
-            _key[b] = shape(_controls); _key[b].fillColor = k_kidle[b].CGColor; _key[b].strokeColor = k_kline[b].CGColor;
-            if (names[b]) { _label[b] = label(_key[b], names[b]); _label[b].foregroundColor = k_ktext[b].CGColor; }   // the D-pad arms carry no label
+            _key[b] = shape(_controls);
+            if (names[b]) _label[b] = label(_key[b], names[b]);   // the D-pad arms carry no label
         }
-        _nat = [CALayer layer]; [_controls addSublayer:_nat];   // the Native layout's layers, made in layoutSubviews (their sizes follow the screen)
         _menu = [DmMenuButton buttonWithType:UIButtonTypeCustom];
-        _menu.backgroundColor = k_menuFill; _menu.layer.borderColor = k_menuLine.CGColor; _menu.layer.borderWidth = 1.5;
+        _menu.backgroundColor = k_idle; _menu.layer.borderColor = k_line.CGColor; _menu.layer.borderWidth = 1.5;
         _menu.layer.shadowColor = UIColor.blackColor.CGColor; _menu.layer.shadowOpacity = 0.2; _menu.layer.shadowRadius = 3; _menu.layer.shadowOffset = CGSizeMake(0, 1);
         _menu.tintColor = k_text; _menu.accessibilityLabel = @"Menu";
         _menu.menu = CFBridgingRelease(dm_game_menu()); _menu.showsMenuAsPrimaryAction = YES;
         __weak DmGamepad *weakSelf = self;
         [_menu addAction:[UIAction actionWithHandler:^(UIAction *a) { (void)a; [weakSelf reset]; }] forControlEvents:UIControlEventMenuActionTriggered];   // the menu opens: release every key and touch first
         [self addSubview:_menu];
-        NSUserDefaults *ud = NSUserDefaults.standardUserDefaults; NSNumber *saved = [ud objectForKey:k_layout_key];
+        NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:k_layout_key];
         int l = saved ? (int)saved.integerValue : DM_GAME_PAD_LAYOUT;
-        if (DM_GAME_PAD_LAYOUT == 3 && ![ud boolForKey:k_native_key]) { l = 3; [ud setBool:YES forKey:k_native_key]; [ud setObject:@(3) forKey:k_layout_key]; }   // once: a layout saved before Native existed gives way to it
         if (l == 2 && dm_opmode() != 0) l = 0;   // Tap only in handheld mode (env.txt's DM_OPMODE may have changed it)
-        if (l < 0 || l > 3) l = 0;
-        _full = l == 1; _tap = l == 2; _native = l == 3;
+        _full = l == 1; _tap = l == 2;
         [self applyLayout];
         NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
         [nc addObserver:self selector:@selector(padsChanged:) name:GCControllerDidConnectNotification object:nil];
@@ -350,16 +234,15 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
 }
 - (void)applyLayout {   // show / hide the controls for the current layout
     [CATransaction begin]; [CATransaction setDisableActions:YES];
-    for (int b = 0; b < B_N; b++) _key[b].hidden = _tap || _native || (fullOnly(b) && !_full);
-    _ring.hidden = _knob.hidden = _tap || _native;
-    _nat.hidden = !_native;
+    for (int b = 0; b < B_N; b++) _key[b].hidden = _tap || (fullOnly(b) && !_full);
+    _ring.hidden = _knob.hidden = _tap;
     [CATransaction commit];
 }
-- (int)padLayout { return _native ? 3 : _tap ? 2 : _full ? 1 : 0; }
+- (int)padLayout { return _tap ? 2 : _full ? 1 : 0; }
 - (void)setPadLayout:(int)l {   // the in-game menu's pick: release every touch first (no key stays held), save, lay out again
     if (l == 2 && dm_opmode() != 0) l = 0;
     [self reset];
-    _full = l == 1; _tap = l == 2; _native = l == 3;
+    _full = l == 1; _tap = l == 2;
     [NSUserDefaults.standardUserDefaults setObject:@(l) forKey:k_layout_key];
     [self applyLayout]; [self setNeedsLayout];
 }
@@ -383,24 +266,6 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
 - (CGRect)corner { if (_layout.separated) return self.safe; UIEdgeInsets i = self.safeAreaInsets; i.left *= K_CORNER_IN; i.right *= K_CORNER_IN; return UIEdgeInsetsInsetRect(self.bounds, i); }   // the rectangle the bottom-corner controls use
 - (CGFloat)u { if (_layout.separated) { CGRect s = self.safe; return MIN(MIN(s.size.height / 430.0, s.size.width / 700.0), 1.3); } return MIN(self.bounds.size.height / 430.0, 1.3); }   // 1 = 430 points tall (iPhone Pro Max landscape)
 static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPointMake(right ? CGRectGetMaxX(s) - dx : CGRectGetMinX(s) + dx, y); }
-// Native: 1 = an 874 x 402 point landscape screen (iPhone 18 Pro), the size the mock-up was drawn for
-- (CGFloat)gu { CGRect s = self.corner; return MIN(MIN(s.size.width / 437.0, s.size.height / 402.0), 1.3); }
-- (void)nat:(int)b centre:(CGPoint *)c radius:(CGFloat *)r {   // a Native key's centre and radius
-    CGRect s = self.corner; CGFloat g = self.gu, R = CGRectGetMaxX(s), L = CGRectGetMinX(s), T = CGRectGetMinY(s), Bt = CGRectGetMaxY(s);
-    CGFloat x = 0, y = 0, rr = 0;
-    switch (b) {
-        case B_B: x = R - 92 * g; y = Bt - 88 * g; rr = 44; break;
-        case B_A: x = R - 180 * g; y = Bt - 74 * g; rr = 30; break;
-        case B_R: x = R - 164 * g; y = Bt - 154 * g; rr = 25; break;
-        case B_ZL: x = R - 106 * g; y = Bt - 188 * g; rr = 25; break;
-        case B_X: x = R - 40 * g; y = Bt - 172 * g; rr = 23; break;
-        case B_Y: x = R - 40 * g; y = Bt - 238 * g; rr = 21; break;
-        case B_PLUS: x = L + 34 * g; y = T + N_TOP_Y * g; rr = N_TOP_R; break;
-        default: x = R - 34 * g; y = T + N_TOP_Y * g; rr = N_TOP_R; break;   // −
-    }
-    *c = CGPointMake(x, y); *r = rr * g;
-}
-- (CGPoint)natStickHome { CGRect s = self.corner; CGFloat g = self.gu; return CGPointMake(CGRectGetMinX(s) + N_STICK_X * g, CGRectGetMaxY(s) - N_STICK_Y * g); }
 - (BOOL)portraitControls { return _layout.separated && self.bounds.size.height > self.bounds.size.width; }
 - (CGPoint)portraitThumbCenter:(BOOL)right {
     CGRect s = self.safe;
@@ -425,8 +290,8 @@ static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPoint
     CGRect s = self.corner;
     return side(s, 0, K_STICK_X * self.u, CGRectGetMaxY(s) - K_PAD_Y * self.u);
 }
-- (CGPoint)stickCentre:(int)i { return i ? _rCentre : _native ? (_stick[0] ? _lCentre : self.natStickHome) : self.stickHome; }
-- (CGFloat)stickR:(int)i { return i ? K_RSTICK_R * self.u : _native ? N_RING_R * self.gu : K_STICK_R * self.u; }
+- (CGPoint)stickCentre:(int)i { return i ? _rCentre : self.stickHome; }
+- (CGFloat)stickR:(int)i { return (i ? K_RSTICK_R : K_STICK_R) * self.u; }
 - (BOOL)inRightArea:(CGPoint)p { CGRect b = _layout.controls; return p.x >= CGRectGetMaxX(b) - b.size.width * K_RSWIPE; }
 - (CGPoint)dpadCenter {
     if (self.portraitControls) {
@@ -449,13 +314,11 @@ static BOOL isClick(int b) { return b == B_LS || b == B_RS; }
 - (CGRect)pillRect:(int)b { CGRect s = self.safe; CGFloat u = self.u, w = K_PILL_W * u, h = K_PILL_H * u;
     CGPoint c = CGPointMake(CGRectGetMidX(s) + (b == B_PLUS ? K_PILL_DX : -K_PILL_DX) * u, CGRectGetMinY(s) + MAX(K_PILL_Y * u, _layout.separated ? 14 : 0));   // − on the left, + on the right
     return CGRectMake(c.x - w / 2, c.y - h / 2, w, h); }
-- (CGPoint)menuCenter { if (_native) { CGRect c = self.corner; return CGPointMake(CGRectGetMaxX(c) - N_MENU_X * self.gu, CGRectGetMinY(c) + N_TOP_Y * self.gu); }
-    CGRect s = self.safe; return CGPointMake(CGRectGetMidX(s), CGRectGetMinY(s) + MAX(K_PILL_Y * self.u, _layout.separated ? 14 : 0)); }
+- (CGPoint)menuCenter { CGRect s = self.safe; return CGPointMake(CGRectGetMidX(s), CGRectGetMinY(s) + MAX(K_PILL_Y * self.u, _layout.separated ? 14 : 0)); }
 
 static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); }
 - (CGFloat)buttonDistance:(int)b point:(CGPoint)p {
     CGFloat u = self.u;
-    if (_native) { CGPoint c; CGFloat r; [self nat:b centre:&c radius:&r]; return dist(p, c) / MAX(r * 1.25, 22); }
     if (isDrop(b)) return dist(p, [self dropCenter:b]) / MAX([self dropR:b] * 1.35, _layout.separated ? 22 : 0);
     if (isClick(b)) return dist(p, [self clickCenter:b]) / MAX(K_CLICK_R * u * 1.35, _layout.separated ? 22 : 0);
     CGRect r = CGRectInset([self pillRect:b], -8 * u, -8 * u);
@@ -465,10 +328,6 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 }
 - (int)btnAt:(CGPoint)p {   // Locked at touch-down; nearest normalized target wins overlapping separated-layout hits.
     int best = -1; CGFloat distance = 1;
-    if (_native) {   // Native: every key is locked at touch-down, the nearest within 1.25 times its radius (at least 22 points)
-        for (int i = 0; i < (int)(sizeof k_nat / sizeof *k_nat); i++) { CGFloat d = [self buttonDistance:k_nat[i] point:p]; if (d <= 1 && (best < 0 || d < distance)) { best = k_nat[i]; distance = d; } }
-        return best;
-    }
     for (int i = 0; i < (int)(sizeof k_btns / sizeof *k_btns); i++) { int b = k_btns[i];
         if (fullOnly(b) && !_full) continue;
         CGFloat d = [self buttonDistance:b point:p];
@@ -479,7 +338,7 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
     }
     return best;
 }
-- (CGFloat)menuDistance:(CGPoint)p { return dist(p, self.menuCenter) / MAX((_native ? N_TOP_R * self.gu * 1.25 : K_MENU_R * self.u * 1.6), 22); }
+- (CGFloat)menuDistance:(CGPoint)p { return dist(p, self.menuCenter) / MAX(K_MENU_R * self.u * 1.6, 22); }
 - (BOOL)menuTakes:(CGPoint)p {   // the menu button takes a touch in its hit circle unless a locked key's target is nearer (the drawn keys are hidden in Tap and with a controller)
     CGFloat d = [self menuDistance:p]; if (d > 1) return NO;
     if (_tap || _padOff || (_layout.separated && !CGRectContainsPoint(_layout.controls, p))) return YES;
@@ -560,7 +419,6 @@ int front_web_touch(void);
 - (BOOL)controlAt:(CGPoint)p {
     if (_padOff || (_layout.separated && !CGRectContainsPoint(_layout.controls, p))) return NO;
     if (_tap) return NO;
-    if (_native) return YES;   // keys, and the two sticks take the rest
     if ([self btnAt:p] >= 0) return YES;
     if (dist(p, self.faceCenter) / (self.faceGap + MAX(self.faceR * 1.6, self.faceHitR)) <= 1) return YES;
     if (_full && dist(p, self.dpadCenter) / MAX(self.dpadR * K_DPAD_GRAB, _layout.separated ? 22 : 0) < 1) return YES;
@@ -579,13 +437,6 @@ int front_web_touch(void);
         if (_layout.separated && !CGRectContainsPoint(_layout.controls, p)) { game |= [self gameBegin:t]; continue; }
         int hit = _tap ? -1 : [self btnAt:p];   // the menu button took its own touches (menuTakes)
         if (hit >= 0) { [_owner setObject:@(C_BTN | (uint64_t)hit << 8) forKey:t]; continue; }
-        if (_native) {   // Native: the left half holds the left stick (centred on its ring when the touch lands on it, else where it lands), the right half the camera
-            int idx = p.x < CGRectGetMidX(_layout.controls) ? 0 : 1;
-            if (_stick[idx]) { game |= [self gameBegin:t]; continue; }
-            if (idx == 0) { CGPoint h = self.natStickHome; _lCentre = dist(p, h) <= N_RING_R * self.gu ? h : p; } else _rCentre = p;
-            [_owner setObject:@(C_STICK | (uint64_t)idx << 8) forKey:t]; _stick[idx] = t; _stickNow[idx] = p;
-            continue;
-        }
         if (_tap) { game |= [self gameBegin:t]; continue; }
         // diamond, D-pad, left stick: take the one with the smallest distance / grab radius, if it is <= 1
         CGFloat best = 1; int kind = C_NONE, idx = 0;
@@ -682,15 +533,10 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
     }
     static const struct { int b; CGFloat angle; } arms[] = {{B_UP, 0}, {B_RIGHT, M_PI_2}, {B_DOWN, M_PI}, {B_LEFT, -M_PI_2}};   // the same arm in 90° steps
     for (int i = 0; i < 4; i++) setPath(_key[arms[i].b], armPath(self.dpadCenter, self.dpadR, K_ARM_W * u, K_ARM_IN * u, arms[i].angle, 6 * u));
-    CGFloat mr = _native ? N_TOP_R * self.gu : K_MENU_R * u; CGPoint mc = self.menuCenter;
+    CGFloat mr = K_MENU_R * u; CGPoint mc = self.menuCenter;
     _menu.frame = CGRectMake(mc.x - mr, mc.y - mr, 2 * mr, 2 * mr); _menu.layer.cornerRadius = mr;
     _menu.layer.shadowPath = [UIBezierPath bezierPathWithOvalInRect:_menu.bounds].CGPath;
-    if (_native) { _menu.backgroundColor = g_glassIdle; _menu.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.45].CGColor; _menu.layer.borderWidth = 1.2; _menu.tintColor = [UIColor colorWithWhite:1 alpha:0.95];
-                   _menu.layer.shadowOpacity = 0.10; _menu.layer.shadowRadius = 6; _menu.layer.shadowOffset = CGSizeMake(0, 2); }
-    else { _menu.backgroundColor = k_menuFill; _menu.layer.borderColor = k_menuLine.CGColor; _menu.layer.borderWidth = 1.5; _menu.tintColor = k_text;
-           _menu.layer.shadowOpacity = 0.2; _menu.layer.shadowRadius = 3; _menu.layer.shadowOffset = CGSizeMake(0, 1); }
-    [_menu setImage:[UIImage systemImageNamed:_native ? @"ellipsis" : @"gearshape.fill" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:(_native ? 11 * self.gu : 13 * u) weight:UIImageSymbolWeightSemibold]] forState:UIControlStateNormal];
-    [self layoutNative:scale];
+    [_menu setImage:[UIImage systemImageNamed:@"gearshape.fill" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:13 * u weight:UIImageSymbolWeightSemibold]] forState:UIControlStateNormal];
     setPath(_ring, circlePath(self.stickHome, [self stickR:0]));
     CGFloat k = K_KNOB_R * u; _knob.bounds = CGRectMake(0, 0, 2 * k, 2 * k);
     setPath(_knob, circlePath(CGPointMake(k, k), k));
@@ -699,38 +545,14 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
     [CATransaction commit];
     [self refresh];
 }
-// Native: the glass keys and the stick, made again at each layout (sizes and places follow the screen); refresh only moves the stick and swaps the pressed fills
-- (void)layoutNative:(CGFloat)scale {
-    _nat.frame = self.layer.bounds;
-    for (CALayer *l in [_nat.sublayers copy]) [l removeFromSuperlayer];
-    for (int b = 0; b < B_N; b++) { _nk[b] = nil; _nbase[b] = nil; }
-    if (!_native) { _nring = _nknob = nil; _nknobBase = nil; return; }
-    CGFloat g = self.gu;
-    _nring = glassDisc(N_RING_R * g, NULL); _nring.position = self.natStickHome; [_nat addSublayer:_nring];
-    CAShapeLayer *kb = nil; _nknob = glassDisc(N_KNOB_R * g, &kb); _nknobBase = kb; _nknob.position = self.natStickHome; [_nat addSublayer:_nknob];
-    static NSString *const sym[B_N] = { [B_A] = @"hand.tap.fill", [B_X] = @"chevron.up.2", [B_Y] = @"square.grid.2x2", [B_R] = @"shield.lefthalf.filled", [B_ZL] = @"scope", [B_PLUS] = @"line.3.horizontal", [B_MINUS] = @"map" };
-    static NSString *const chip[B_N] = { [B_A] = @"A", [B_B] = @"B", [B_X] = @"X", [B_Y] = @"Y", [B_R] = @"R", [B_ZL] = @"ZL", [B_PLUS] = @"+", [B_MINUS] = @"\u2212" };
-    for (int i = 0; i < (int)(sizeof k_nat / sizeof *k_nat); i++) { int b = k_nat[i]; CGPoint c; CGFloat r; [self nat:b centre:&c radius:&r];
-        CAShapeLayer *base = nil; CALayer *d = glassDisc(r, &base); d.position = c;
-        if (b == B_B) glassSword(d, 24 * g); else glassSymbol(d, sym[b], (b == B_A ? 17 : b == B_PLUS || b == B_MINUS ? 11 : b == B_X ? 14 : b == B_Y ? 12 : 15) * g, scale);
-        glassChip(d, chip[b], b == B_R || b == B_ZL, scale);
-        [_nat addSublayer:d]; _nk[b] = d; _nbase[b] = base;
-    }
-}
 - (void)safeAreaInsetsDidChange { [super safeAreaInsetsDidChange]; [self setNeedsLayout]; }
 - (void)refresh {   // pressed state → fill, sticks → knob position
     uint64_t all = _faceBits | _dpadBits | _btnBits;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
     for (int b = 0; b < B_N; b++) { BOOL on = (all >> b) & 1;
-        _key[b].fillColor = (on ? k_kon[b] : k_kidle[b]).CGColor; _label[b].foregroundColor = (on ? k_ktextOn[b] : k_ktext[b]).CGColor; }
+        _key[b].fillColor = (on ? k_on : k_idle).CGColor; _label[b].foregroundColor = (on ? k_textOn : k_text).CGColor; }
     CGPoint h = self.stickHome, o = [self knobOffset:0];
-    _knob.position = CGPointMake(h.x + o.x, h.y + o.y); _knob.fillColor = (_stick[0] ? k_knobOn : k_knobIdle).CGColor;
-    if (_native) {   // pressed: the base turns light blue and the disc grows a little; the stick's ring sits where it is held, its knob follows the thumb
-        for (int i = 0; i < (int)(sizeof k_nat / sizeof *k_nat); i++) { int b = k_nat[i]; BOOL on = (all >> b) & 1;
-            _nbase[b].fillColor = (on ? g_glassOn : g_glassIdle).CGColor; _nk[b].transform = on ? CATransform3DMakeScale(1.06, 1.06, 1) : CATransform3DIdentity; }
-        CGPoint c = [self stickCentre:0]; _nring.position = c; _nknob.position = CGPointMake(c.x + o.x, c.y + o.y);
-        _nknobBase.fillColor = (_stick[0] ? g_glassOn : g_glassIdle).CGColor;
-    }
+    _knob.position = CGPointMake(h.x + o.x, h.y + o.y); _knob.fillColor = (_stick[0] ? k_on : k_idle).CGColor;
     [CATransaction commit];
 }
 
@@ -738,14 +560,17 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
 // Each controller with an extended gamepad profile is a player of its own, as on the Mac (front_mac.m): it holds a slot (pad_slots.h: player 1 first, a reconnected controller
 // gets its player back) and goes to dm_pad_set_player, and hle_hid.c reports player n on its own npad while the slot is held (dm_pad_players). Player 1's controller is ORed
 // with the touch gamepad; a one-player game that supports only No1 / Handheld still sees every controller as player 1 (hle_hid.c). Each player has its controller's rumble and
-// gyro; the phone's gyro is player 1's. With DM_PAD_MERGE=1 every controller is player 1, as before (the last one moved wins)
+// gyro; the phone's gyro is player 1's. With DM_PAD_MERGE=1 every controller is player 1, as before (the last one moved wins). With DM_PAD_PRESS_TO_JOIN=1 a controller is
+// no player until one of its buttons is pressed, then it is the lowest player free (pad_slot_take_lowest), as on the Mac: the players choose their order
 static pad_slots g_slots;
 static GCController *g_held[DM_PLAYERS];   // the controller of each slot, kept alive while it holds it (the slot table keys on its pointer)
-static int g_merge;
+static int g_merge, g_press_to_join;
 static int32_t axis(float v) { return (int32_t)(fmaxf(-1.f, fminf(1.f, v)) * 32767); }
+static const char *pad_name(GCController *c);
+static void npad_name(int p, char *out, size_t cap);
+static int cp_poll(void);
 static void read_pad(GCExtendedGamepad *g) {
-    int p = g_merge ? 0 : pad_slot_of(&g_slots, (__bridge const void *)g.controller); if (p < 0) return;
-    dm_haptics_apple_controller(p, g.controller);
+    int p = g_merge ? 0 : pad_slot_of(&g_slots, (__bridge const void *)g.controller); if (p < 0 && !g_press_to_join) return;
     _Static_assert(DM_BTN_A == 1u << B_A && DM_BTN_B == 1u << B_B && DM_BTN_X == 1u << B_X && DM_BTN_Y == 1u << B_Y, "face button bits");
     uint64_t m = dm_pad_face(g);   // by position, a Nintendo pad by its labels
     #define K(btn, bit) if (btn.isPressed) m |= 1ull << bit
@@ -754,6 +579,15 @@ static void read_pad(GCExtendedGamepad *g) {
     if (g.leftThumbstickButton) K(g.leftThumbstickButton, B_LS); if (g.rightThumbstickButton) K(g.rightThumbstickButton, B_RS);
     K(g.dpad.left, B_LEFT); K(g.dpad.up, B_UP); K(g.dpad.right, B_RIGHT); K(g.dpad.down, B_DOWN);
     #undef K
+    if (p < 0) {   // DM_PAD_PRESS_TO_JOIN=1: it joins at its first button, a press the game also gets
+        GCController *c = g.controller; char nb[16];
+        if (!m) return;
+        if ((p = pad_slot_take_lowest(&g_slots, (__bridge const void *)c, pad_name(c))) < 0) { LOG("controller '%s': a button pressed, but all %d players are taken", pad_name(c), DM_PLAYERS); return; }
+        g_held[p] = c; dm_motion_attach(c, p); dm_pad_players(pad_slot_mask(&g_slots));
+        npad_name(p, nb, sizeof nb); LOG("controller '%s': a button pressed: player %d (npad %s)", pad_name(c), p + 1, nb);
+    }
+    if (cp_poll()) return;   // the controller applet's prompt has the controllers (front_ctrl_support)
+    dm_haptics_apple_controller(p, g.controller);
     dm_pad_set_player(p, m, axis(g.leftThumbstick.xAxis.value), axis(g.leftThumbstick.yAxis.value), axis(g.rightThumbstick.xAxis.value), axis(g.rightThumbstick.yAxis.value));
 }
 // Home and Capture: without this iOS takes them as system gestures (Home opens the Games overlay, Capture a screenshot); the app gives them no function
@@ -762,7 +596,9 @@ static const char *pad_name(GCController *c) { return c.vendorName.UTF8String ?:
 static void npad_name(int p, char *out, size_t cap) { uint32_t id = dm_player_npad(p); if (id == 0x20) snprintf(out, cap, "handheld"); else snprintf(out, cap, "%u", id); }
 static void pads_start(void) {
     const char *e = getenv("DM_PAD_MERGE"); g_merge = e && atoi(e);
+    e = getenv("DM_PAD_PRESS_TO_JOIN"); g_press_to_join = !g_merge && e && atoi(e);
     LOG("front end: %s", g_merge ? "every controller is player 1 (DM_PAD_MERGE)" : "each controller is a player of its own, the touch gamepad plays with player 1");
+    if (g_press_to_join) LOG("front end: a controller becomes a player at its first button press, the lowest player free (DM_PAD_PRESS_TO_JOIN)");
 }
 // Called at start and on every connect / disconnect (gone: the controller that was just removed, nil otherwise); returns whether a controller is in use
 static BOOL pads_merged(GCController *gone) {
@@ -779,7 +615,7 @@ static BOOL pads_merged(GCController *gone) {
     return any;
 }
 static BOOL pads_slotted(GCController *gone) {
-    NSArray<GCController *> *now = GCController.controllers; char nb[16];
+    NSArray<GCController *> *now = GCController.controllers; char nb[16]; BOOL waiting = NO;
     for (int p = 0; p < DM_PLAYERS; p++) if (g_held[p] && (g_held[p] == gone || ![now containsObject:g_held[p]])) {
         npad_name(p, nb, sizeof nb); LOG("controller '%s' disconnected: player %d (npad %s) is free", pad_name(g_held[p]), p + 1, nb);
         g_held[p].extendedGamepad.valueChangedHandler = nil;
@@ -789,6 +625,12 @@ static BOOL pads_slotted(GCController *gone) {
         dm_pad_set_player(p, 0, 0, 0, 0, 0);   // nothing stays pressed
     }
     for (GCController *c in now) if (c.extendedGamepad && c != gone && pad_slot_of(&g_slots, (__bridge const void *)c) < 0) {
+        if (g_press_to_join) {   // a player at its first button (read_pad)
+            waiting = YES; pad_keep_system_buttons(c);
+            if (!c.extendedGamepad.valueChangedHandler) LOG("controller '%s' connected: press a button to play (DM_PAD_PRESS_TO_JOIN)", pad_name(c));
+            c.extendedGamepad.valueChangedHandler = ^(GCExtendedGamepad *g, GCControllerElement *el) { (void)el; read_pad(g); };
+            continue;
+        }
         int p = pad_slot_take(&g_slots, (__bridge const void *)c, pad_name(c));
         if (p < 0) { LOG("controller '%s' connected: all %d players are taken, not used", pad_name(c), DM_PLAYERS); continue; }
         g_held[p] = c; pad_keep_system_buttons(c);
@@ -798,7 +640,8 @@ static BOOL pads_slotted(GCController *gone) {
         read_pad(c.extendedGamepad);
     }
     dm_pad_players(pad_slot_mask(&g_slots));
-    return pad_slot_mask(&g_slots) != 0;
+    dispatch_async(dispatch_get_main_queue(), ^{ cp_poll(); });   // a controller came or went while the controller applet's prompt is up
+    return waiting || pad_slot_mask(&g_slots) != 0;   // a controller waiting for its first press hides the touch gamepad too
 }
 - (void)padsChanged:(NSNotification *)note {
     GCController *c = note.object, *gone = [note.name isEqual:GCControllerDidDisconnectNotification] ? c : nil;
@@ -808,12 +651,103 @@ static BOOL pads_slotted(GCController *gone) {
 }
 @end
 
+// The controller applet's prompt (front.h front_ctrl_support, ctrl_prompt.h; GitHub issue #1640), as the Mac's (front_mac.m): the game asked for more players than it sees, and
+// the game's thread waits while a card is up over the game. A controller that joins meanwhile is a player at once (its first button with DM_PAD_PRESS_TO_JOIN, its connection
+// without) and the count follows. A and B are GameController's buttonA and buttonB on any controller (the press that makes a controller join does not count); the card's
+// Done and Cancel buttons take touches, and its scrim keeps every other touch from the game and the touch gamepad. The game gets no controller input while it is up, nor
+// until the A or B that closed it is let go. A front end passes the texts in the player's language as DM_CTRL_PROMPT_TEXT (cp_text). Main thread
+static ctrl_prompt g_cp; static int g_cp_confirm, g_cp_cancel, g_cp_ok;
+static UIView *g_cp_view; static UILabel *g_cp_count; static UIButton *g_cp_done_btn; static dispatch_semaphore_t g_cp_done;
+@interface DmCtrlPrompt : NSObject @end
+@implementation DmCtrlPrompt
+- (void)done { g_cp_confirm = 1; cp_poll(); }
+- (void)cancel { g_cp_cancel = 1; cp_poll(); }
+@end
+static DmCtrlPrompt *g_cp_target;
+static void cp_buttons(int *a, int *b) {
+    *a = *b = 0;
+    for (GCController *c in GCController.controllers) { GCExtendedGamepad *g = c.extendedGamepad; if (g) { *a |= g.buttonA.isPressed; *b |= g.buttonB.isPressed; } }
+}
+static int cp_waiting(void) {   // connected controllers that are no player yet
+    int n = 0;
+    if (!g_merge) for (GCController *c in GCController.controllers) if (c.extendedGamepad && pad_slot_of(&g_slots, (__bridge const void *)c) < 0) n++;
+    return n;
+}
+static UILabel *cp_label(const char *text, CGFloat size, UIFontWeight w, CGFloat alpha) {
+    UILabel *l = [UILabel new]; l.text = @(text); l.font = [UIFont systemFontOfSize:size weight:w]; l.textColor = [UIColor colorWithWhite:1 alpha:alpha];
+    l.numberOfLines = 0; l.textAlignment = NSTextAlignmentCenter; return l;
+}
+static UIButton *cp_button(const char *title, SEL action, int primary) {
+    UIButtonConfiguration *cfg = primary ? UIButtonConfiguration.filledButtonConfiguration : UIButtonConfiguration.grayButtonConfiguration;
+    cfg.title = @(title); cfg.cornerStyle = UIButtonConfigurationCornerStyleCapsule; cfg.buttonSize = UIButtonConfigurationSizeLarge;
+    UIButton *b = [UIButton buttonWithConfiguration:cfg primaryAction:nil];
+    [b addTarget:g_cp_target action:action forControlEvents:UIControlEventTouchUpInside]; return b;
+}
+static void cp_show(void) {   // the card once per prompt; its count and its Done button follow each step
+    const char *env = getenv("DM_CTRL_PROMPT_TEXT"); char t[CP_TEXTS][256];
+    for (int i = 0; i < CP_TEXTS; i++) cp_text(env, i, &g_cp, t[i], sizeof t[i]);
+    if (!g_cp_view) {
+        UIWindow *w = g_view.window;
+        if (!w) for (UIScene *sc in UIApplication.sharedApplication.connectedScenes) if ([sc isKindOfClass:UIWindowScene.class]) for (UIWindow *x in ((UIWindowScene *)sc).windows) if (x.isKeyWindow) w = x;
+        if (!w) return;
+        if (!g_cp_target) g_cp_target = [DmCtrlPrompt new];
+        UIView *scrim = [[UIView alloc] initWithFrame:w.bounds]; scrim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        scrim.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6];
+        g_cp_count = cp_label(t[CP_TEXT_COUNT], 20, UIFontWeightSemibold, 0.9);
+        g_cp_done_btn = cp_button(t[CP_TEXT_DONE], @selector(done), 1);
+        UIStackView *actions = [[UIStackView alloc] initWithArrangedSubviews:@[g_cp_done_btn, cp_button(t[CP_TEXT_CANCEL], @selector(cancel), 0)]];
+        actions.spacing = 16; actions.distribution = UIStackViewDistributionFillEqually;
+        UIStackView *card = [[UIStackView alloc] initWithArrangedSubviews:@[cp_label(t[CP_TEXT_TITLE], 26, UIFontWeightBold, 1), cp_label(t[CP_TEXT_HINT], 17, UIFontWeightRegular, 0.6), g_cp_count, actions]];
+        card.axis = UILayoutConstraintAxisVertical; card.spacing = 14; [card setCustomSpacing:28 afterView:g_cp_count];
+        card.layoutMargins = UIEdgeInsetsMake(32, 36, 28, 36); card.layoutMarginsRelativeArrangement = YES;
+        card.backgroundColor = [UIColor colorWithRed:0.10 green:0.10 blue:0.11 alpha:1]; card.layer.cornerRadius = 28;
+        card.translatesAutoresizingMaskIntoConstraints = NO;
+        [scrim addSubview:card];
+        NSLayoutConstraint *wide = [card.widthAnchor constraintEqualToConstant:520]; wide.priority = UILayoutPriorityDefaultHigh;   // narrower on a narrow screen
+        [NSLayoutConstraint activateConstraints:@[[card.centerXAnchor constraintEqualToAnchor:scrim.centerXAnchor], [card.centerYAnchor constraintEqualToAnchor:scrim.centerYAnchor],
+            [card.widthAnchor constraintLessThanOrEqualToAnchor:scrim.widthAnchor constant:-32], wide]];
+        [w addSubview:scrim]; g_cp_view = scrim;
+    }
+    g_cp_count.text = @(t[CP_TEXT_COUNT]);
+    g_cp_done_btn.enabled = cp_can_confirm(&g_cp);
+}
+// One step of the prompt (a button, a touch on the card, a controller joining, coming or going); returns whether it keeps the game's input
+static int cp_poll(void) {
+    if (g_cp.phase == CP_IDLE) return 0;
+    int a, b, joined = dm_players_reported(); cp_buttons(&a, &b);
+    int confirm = g_cp_confirm, cancel = g_cp_cancel; g_cp_confirm = g_cp_cancel = 0;
+    cp_phase was = g_cp.phase, ph = cp_step(&g_cp, joined, cp_waiting(), a, b, confirm, cancel);
+    if (was == CP_OPEN && ph == CP_OPEN) cp_show();
+    if (was == CP_OPEN && ph != CP_OPEN) {
+        [g_cp_view removeFromSuperview]; g_cp_view = nil; g_cp_count = nil; g_cp_done_btn = nil;
+        LOG("front end: controller prompt closed: %d players (%s)", joined, g_cp.ok ? "done" : "canceled");
+        g_cp_ok = g_cp.ok; dispatch_semaphore_signal(g_cp_done);
+        ph = cp_step(&g_cp, joined, 0, a, b, 0, 0);   // nothing held: the game has its input at once
+    }
+    if (ph == CP_IDLE) { for (int p = 0; p < DM_PLAYERS; p++) if (g_held[p].extendedGamepad) read_pad(g_held[p].extendedGamepad); return 0; }   // each controller read as it is now
+    return 1;
+}
+int front_ctrl_support(int min, int max) {
+    if (!front_metal_layer()) return -1;
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [g_view reset]; dm_touch_set(NULL, 0);   // nothing the game held stays pressed while the prompt has the input
+        if (g_merge) dm_pad_set(0, 0, 0, 0, 0); else for (int p = 0; p < DM_PLAYERS; p++) if (g_held[p]) dm_pad_set_player(p, 0, 0, 0, 0, 0);
+        int a, b; cp_buttons(&a, &b);
+        g_cp_done = done; cp_open(&g_cp, min, max, dm_players_reported(), a, b);
+        LOG("front end: controller prompt open: %d to %d players wanted, %d in, %d controllers waiting to join", min, max, g_cp.joined, cp_waiting());
+        cp_show(); cp_poll();
+    });
+    dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+    return g_cp_ok;
+}
+
 UIView *dm_gamepad_view(CGRect frame) { DmGamepad *v = [[DmGamepad alloc] initWithFrame:frame]; g_view = v; return v; }
 void dm_gamepad_arrange(UIView *view, DmLayout layout) { [(DmGamepad *)view arrange:layout]; }
 void dm_gamepad_opmode_changed(void) { [g_view opmodeChanged]; }
 void dm_gamepad_touch_feedback(bool on) { [g_view setTouchFeedback:on]; }
 int dm_pad_layout(void) { return g_view ? [g_view padLayout] : 0; }
-bool dm_pad_layout_offered(int layout) { return layout == 0 || layout == 1 || layout == 3 || (layout == 2 && dm_opmode() == 0); }
+bool dm_pad_layout_offered(int layout) { return layout == 0 || layout == 1 || (layout == 2 && dm_opmode() == 0); }
 void dm_pad_layout_set(int layout) { [g_view setPadLayout:layout]; }
 void dm_gamepad_active(void) { dispatch_async(dispatch_get_main_queue(), ^{ for (GCController *c in GCController.controllers) dm_motion_rearm(c); }); }   // On become active: motion_apple.h
 void dm_gamepad_reset(void) {   // On resign active: release everything (a key held while switching away and released in background gets no "release")

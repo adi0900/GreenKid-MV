@@ -3,8 +3,6 @@
 // Basis: both are implementations of nn::codec::IOpusDecoder, with the 10 vtable slots identical one by one in order and signature (destructor×2, GetWorkBufferSize, IsInitialized,
 // Initialize, Finalize, GetSampleRate, GetChannelCount, Reset, DecodeInterleaved); the game allocates 0x40 bytes and the software object is 0x30 bytes.
 #include "hle.h"
-#include <pthread.h>
-#include <stdatomic.h>
 
 HLE_FORCE("_ZN2nn5codec19HardwareOpusDecoderC1Ei", "hwopus service; replaced by the SDK software OpusDecoder (same IOpusDecoder virtual interface)",
           void, h_codec_HwOpusCtor, void *self, int option) {
@@ -19,7 +17,11 @@ HLE_FORCE("_ZN2nn5codec19HardwareOpusDecoderC1Ei", "hwopus service; replaced by 
 // game's HardwareOpusDecoderType does not matter; the game's work buffer is sized by GetOpusDecoderWorkBufferSize and handed to the software decoder as is.
 #define SOFT_OPUS_STATE 0x200   // bytes for the software OpusDecoderType (larger than the SDK's)
 static void *opus_fn(const char *name) { void *f = guest_sym(name); if (!f) die("sdk lacks %s", name); return f; }
-static void *opus_soft(const void *hw) { void *s = objmap_get(hw); if (!s) die("Opus decoder %p was not initialized by the host", hw); return s; }
+// A decoder of a manager (SDK 21's form, below) is kept in objmap under gd + 1, the older interface's software state under gd: one key for both made the manager's calls read a software state as an opus_dec
+// whenever its +0x10 (the work buffer's size in Kirby Air Riders, SDK 20) was not 0, and FinalizeHardwareOpusDecoder crashed on a null decoder list
+#define OPUS_MGR_KEY(gd) ((const char *)(gd) + 1)
+static void *opus_mgr_dec_soft(const void *gd);
+static void *opus_soft(const void *hw) { void *s = opus_mgr_dec_soft(hw); if (!s) s = objmap_get(hw); if (!s) die("Opus decoder %p was not initialized by the host", hw); return s; }
 HLE_FORCE("_ZN2nn5codec36GetHardwareOpusDecoderWorkBufferSizeEiii", "hwopus service; work buffer computed for the software decoder", size_t, h_codec_HwOpusWorkSize, int rate, int ch, int option) {
     (void)option; size_t (*f)(int, int) = opus_fn("_ZN2nn5codec28GetOpusDecoderWorkBufferSizeEii"); return f(rate, ch);
 }
@@ -53,17 +55,7 @@ HLE_FORCE("_ZN2nn5codec24ResetHardwareOpusDecoderEPNS0_23HardwareOpusDecoderType
 HLE_FORCE("_ZN2nn5codec33DecodeOpusInterleavedWithHardwareEPNS0_23HardwareOpusDecoderTypeEPmPiPsmPKvm", "hwopus service; software OpusDecoder", int, h_codec_HwOpusDecode,
           void *hw, size_t *consumed, int *samples, int16_t *out, size_t out_size, const void *in, size_t in_size) {
     int (*f)(void *, size_t *, int *, int16_t *, size_t, const void *, size_t) = opus_fn("_ZN2nn5codec21DecodeOpusInterleavedEPNS0_15OpusDecoderTypeEPmPiPsmPKvm");
-    int r = f(opus_soft(hw), consumed, samples, out, out_size, in, in_size);
-    {   // DM_AUDREN_TRACE: once a second, the packets decoded in that second, the samples they gave and the failures
-        static int tr = -1; if (tr < 0) tr = getenv("DM_AUDREN_TRACE") != NULL;
-        static _Atomic uint64_t n, smp, bad, t0; static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
-        if (tr) { atomic_fetch_add(&n, 1); atomic_fetch_add(&smp, r == 0 && samples ? (uint64_t)*samples : 0); if (r) atomic_fetch_add(&bad, 1);
-            uint64_t t = now_ns(); pthread_mutex_lock(&mu);
-            if (!t0) t0 = t; else if (t - t0 >= 1000000000ull) { LOG("[codec] Opus (hardware C interface) at t=%.3f s: in %.2f s %llu packets decoded, %llu samples, %llu failed", t / 1e9, (t - t0) / 1e9,
-                (unsigned long long)atomic_exchange(&n, 0), (unsigned long long)atomic_exchange(&smp, 0), (unsigned long long)atomic_exchange(&bad, 0)); t0 = t; }
-            pthread_mutex_unlock(&mu); }
-    }
-    return r;
+    return f(opus_soft(hw), consumed, samples, out, out_size, in, in_size);
 }
 
 // nn::codec::HardwareOpusMultiStreamDecoder (Hyrule Warriors: Age of Calamity, SDK 9.6.0: its sound streams are multi-stream Opus): the same swap as HardwareOpusDecoder above.
@@ -135,7 +127,8 @@ typedef struct opus_mgr opus_mgr;
 typedef struct { opus_mgr *m; void *soft; void *work; int ch; opus_req *wait, *wait_tail, *done, *done_tail; int nwait, ndone; } opus_dec;
 struct opus_mgr { pthread_mutex_t lock; void *event; int io_total, io_used, ndec, cap; opus_dec **dec; };
 static opus_mgr *opus_mgr_of(const void *gm) { opus_mgr *m = *(opus_mgr *const *)gm; if (!m) die("Opus decoder manager %p was not initialized by the host", gm); return m; }
-static opus_dec *opus_dec_of(const void *gd) { opus_dec *d = objmap_get(gd); if (!d) die("Opus decoder %p was not initialized by the host", gd); return d; }
+static opus_dec *opus_dec_of(const void *gd) { opus_dec *d = objmap_get(OPUS_MGR_KEY(gd)); if (!d) die("Opus decoder %p was not initialized by the host", gd); return d; }
+static void *opus_mgr_dec_soft(const void *gd) { opus_dec *d = objmap_get(OPUS_MGR_KEY(gd)); return d ? d->soft : NULL; }
 static void opus_free_list(opus_req *r) { while (r) { opus_req *n = r->next; free(r); r = n; } }
 
 HLE_FORCE("_ZN2nn5codec43GetHardwareOpusDecoderManagerWorkBufferSizeEiiNS_8TimeSpanEii", "hwopus service; the host keeps the manager's state, the work buffer is not used",
@@ -177,7 +170,7 @@ HLE_FORCE("_ZN2nn5codec29InitializeHardwareOpusDecoderEPNS0_23HardwareOpusDecode
     if (m->ndec == m->cap) { m->cap *= 2; opus_dec **dec = realloc(m->dec, (size_t)m->cap * sizeof *m->dec); if (!dec) die("Opus manager realloc"); m->dec = dec; }
     m->dec[m->ndec++] = d;
     pthread_mutex_unlock(&m->lock);
-    objmap_put(gd, d);
+    objmap_put(OPUS_MGR_KEY(gd), d);
     return 0;
 }
 static void opus_dec_clear(opus_dec *d) {   // under the manager's lock: every request of the decoder dropped, its I/O buffers back to the pool
@@ -187,8 +180,8 @@ static void opus_dec_clear(opus_dec *d) {   // under the manager's lock: every r
 }
 // FinalizeHardwareOpusDecoder and ResetHardwareOpusDecoder are the hooks above (the older C interface): both find this decoder through objmap first
 static int opus_mgr_dec_fini(void *gd) {
-    opus_dec *d = objmap_get(gd); if (!d || !d->work) return 0;   // the older interface's state has no work buffer of its own
-    objmap_del(gd);
+    opus_dec *d = objmap_get(OPUS_MGR_KEY(gd)); if (!d) return 0;
+    objmap_del(OPUS_MGR_KEY(gd));
     void (*fini)(void *) = opus_fn("_ZN2nn5codec19FinalizeOpusDecoderEPNS0_15OpusDecoderTypeE");
     opus_mgr *m = d->m;
     if (m) {
@@ -200,7 +193,7 @@ static int opus_mgr_dec_fini(void *gd) {
     return 1;
 }
 static int opus_mgr_dec_reset(void *gd) {
-    opus_dec *d = objmap_get(gd); if (!d || !d->work) return 0;
+    opus_dec *d = objmap_get(OPUS_MGR_KEY(gd)); if (!d) return 0;
     void (*reset)(void *) = opus_fn("_ZN2nn5codec16ResetOpusDecoderEPNS0_15OpusDecoderTypeE");
     if (d->m) pthread_mutex_lock(&d->m->lock);
     opus_dec_clear(d); reset(d->soft);

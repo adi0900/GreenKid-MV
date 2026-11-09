@@ -218,3 +218,59 @@ These credits come from the pinned history’s `Co-authored-by` trailers. They s
 ### Tool-attribution trailers
 
 Claude Code (1), Claude Fable 5.1 (1), Claude Opus 5.5 (42), Claude Opus 5.5 (1M context) (1), Codex (1). These are tooling attributions, not invented human contributors.
+
+## Contributors to the engine changes in 0.2.0
+
+Names from the author lines and co-author trailers of the seedds/nxnative commits between `e9c2f7e1` and `2a6f9b32`, and from the authors of the open upstream pull requests included in 0.2.0 (#1920, #1876, #1951, #1917, #1824, #1927, #1842, #1777, #1888), as recorded:
+
+- 528z4b2kgc-ux
+- Alexandre Melo
+- Amost-
+- Animaxx
+- Aoba_d1snet
+- Atomsk
+- Atomsk-debug
+- CatPawPrint
+- Copak731
+- Elie
+- Faris Benhaddou
+- FeReuss
+- Felipe Milioni
+- FifteenPen
+- Georgi Shteryanov
+- HammerChain
+- Know-It-All-Brother
+- Lennart Kotzur
+- Ludovic LEMARINEL - Adesin.fr
+- Marcos Susaña
+- Mariano Abad
+- Michael Straßburger
+- Nawangwe
+- Nochul Park
+- Puca
+- Puca Vaz
+- PucaVaz
+- Ray McDonald
+- Robert McFadden
+- TheekshanaA
+- Yunus ACAR
+- bettterlabs
+- bmjask
+- bmle69
+- cocoman93
+- daviddiblasi
+- enjoyerofslop
+- flaviopz
+- gydisme
+- hlstwizard
+- ksolenk38ze
+- lihengchaocn-png
+- lunks
+- nafields
+- nufegia
+- qixi
+- race-mountain-rock
+- sen-6ei
+- uncraftablexd
+- yangyidong
+- ycarogabriel-lgtm

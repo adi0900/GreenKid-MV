@@ -2,7 +2,6 @@ using Ryujinx.Graphics.Shader.Decoders;
 using Ryujinx.Graphics.Shader.IntermediateRepresentation;
 using Ryujinx.Graphics.Shader.Translation;
 using System.Numerics;
-using static Ryujinx.Graphics.Shader.Instructions.InstEmitAluHelper;
 using static Ryujinx.Graphics.Shader.Instructions.InstEmitHelper;
 using static Ryujinx.Graphics.Shader.IntermediateRepresentation.OperandHelper;
 
@@ -201,21 +200,21 @@ namespace Ryujinx.Graphics.Shader.Instructions
             }
         }
 
-        // nxnative: a float add (RED / ATOMG .ADD.F32.FTZ.RN) has no atomic in the IR, so it retries a compare-and-swap of the word. Ocarina of Time's agl analysis shaders sum the
-        // scene's sky, probes and shadows this way; dropped, every sum stayed 0.
+        // nxnative: a float atomic add (RED.F32.FTZ.RN and ATOM's float form), as a compare-and-swap loop on the word: neither SPIR-V as the chain uses it nor Metal's texture atomics have one. It was
+        // dropped with a log line, so agl's scene analysis summed nothing: Ocarina of Time's probe_analyze reads the probes' luminance into a buffer the CPU turns into exposure, and at 0 the game took
+        // its full correction, several times too bright. Returns the value before the add
         private static Operand EmitAtomicAddF32(EmitterContext context, StorageKind storageKind, Operand e0, Operand e1, Operand value)
         {
-            Operand lblLoopHead = Label();
+            Operand lblRetry = Label();
+            context.MarkLabel(lblRetry);
 
-            context.MarkLabel(lblLoopHead);
+            Operand expected = context.Load(storageKind, e0, e1);
+            Operand sum = context.FPAdd(expected, value);
+            Operand found = context.AtomicCompareAndSwap(storageKind, e0, e1, expected, sum);
 
-            Operand oldValue = context.Load(storageKind, e0, e1);
-            Operand newValue = FlushDenormal(context, context.FPAdd(FlushDenormal(context, oldValue), FlushDenormal(context, value)));
-            Operand casResult = context.AtomicCompareAndSwap(storageKind, e0, e1, oldValue, newValue);
+            context.BranchIfTrue(lblRetry, context.ICompareNotEqual(found, expected));
 
-            context.BranchIfTrue(lblLoopHead, context.ICompareNotEqual(casResult, oldValue));
-
-            return oldValue;
+            return found;
         }
 
         private static Operand EmitAtomicOp(
@@ -394,6 +393,10 @@ namespace Ryujinx.Graphics.Shader.Instructions
 
             Operand srcA = context.Copy(new Operand(new Register(ra, RegisterType.Gpr)));
 
+            // nxnative: the words of one LDG.64 / LDG.128 are marked as one access (Operation.GlobalVectorCount, as in InstEmitAmpereMem.ALdg)
+            bool vector = count > 1 && storageKind == StorageKind.GlobalMemory && rd + count <= RegisterConsts.RegisterZeroIndex;
+            int group = vector ? ++context.GlobalVectorGroups : 0;
+
             for (int index = 0; index < count; index++)
             {
                 Register dest = new(rd + index, RegisterType.Gpr);
@@ -404,6 +407,13 @@ namespace Ryujinx.Graphics.Shader.Instructions
                 }
 
                 Operand value = context.Load(storageKind, context.IAdd(srcA, Const(offset + index * 4)), addrHigh);
+
+                if (vector && value.AsgOp is Operation load)
+                {
+                    load.GlobalVectorCount = count;
+                    load.GlobalVectorWord = index;
+                    load.GlobalVectorGroup = group;
+                }
 
                 context.Copy(Register(dest), value);
             }

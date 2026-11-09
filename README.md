@@ -11,9 +11,19 @@ GreenKid-MV packages other developers’ native-execution work with a small Mac 
 
 ## Status
 
-**Experimental preview.** This distribution is focused on the Switch 2 Ocarina of Time dump with update `v131072`. It pins the engine to `e9c2f7e1f19a8c74e90283e892b8973173eabd61`, aiming for 60 FPS with low RAM use; it does not silently track upstream updates.
+**Experimental preview.** This distribution is focused on the Switch 2 Ocarina of Time dump with update `v131072`. Since 0.2.0 the engine is upstream nxnative's latest code (`seedds/nxnative` main `2a6f9b32`) plus GreenKid-MV's additions, pinned as `greenkid-v2-73463569c5e7`; it does not silently track upstream updates.
 
-The engine includes upstream shader-synchronization corrections, frame buffering and resolution presets. Sustained 60 FPS and lighting correctness have **not been certified for this GreenKid-MV release**. Your hardware, game dump and area affect the result. The local Zelda performance investigation remains separate from the public launcher.
+It includes upstream's Ocarina of Time lighting, terrain and stability fixes, MetalFX for the game's own upscaler, the Normal / Potato resolution presets and settings tuned to hold 60 FPS without overheating a fanless Mac (see [What's new in 0.2.0](#whats-new-in-020)). Sustained 60 FPS and lighting correctness have **not been certified for this GreenKid-MV release**. Your hardware, game dump and area affect the result. The local Zelda performance investigation remains separate from the public launcher.
+
+## What's new in 0.2.0
+
+- **Engine moved to upstream's latest nxnative** (all upstream commits up to `2a6f9b32`), keeping GreenKid-MV's resolution presets and game-file overlays.
+- **Lighting:** fog, mist, shadow and light-shaft fixes from upstream; no more lighting flicker in Kokiri Forest.
+- **Terrain:** streamed terrain tiles no longer vanish or go flat after walking (upstream PRs #1920, #1876).
+- **MetalFX** now actually draws the game's own chained upscaler (upstream PR #1951).
+- **Visual fixes:** light-blue dashes at Death Mountain (#1917), a hard edge in the ground mist (#1824).
+- **Stability:** crash after saving, ocarina crash, a GPU-hang watchdog (#1777), an opt-in M1/M2 hang workaround (`DM_NVN_ISOLATE_TASK=1`, #1842), and uploads kept on the submit thread (no present-thread abort).
+- **Performance and heat:** two CPU savings per draw, fixed resolution instead of the launcher's dynamic resolution, one frame per display refresh, a 60 FPS cap and simple window scaling. The Performance preset (960×540 upscaled) leaves GPU headroom so a fanless Mac stays at 60 instead of heating up and throttling.
 
 ## Features
 
