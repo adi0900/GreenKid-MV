@@ -62,7 +62,7 @@ def main():
     if errors:
         raise SystemExit('Bundled engine failed content check: ' + json.dumps(errors))
     archive = dist / f'GreenKid-MV-{version}-macOS-arm64.zip'
-    run('ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', app, archive)
+    run('ditto', '-c', '-k', '--norsrc', '--noextattr', '--noacl', '--keepParent', app, archive)  # no __MACOSX/ metadata entries
     source_zip = dist / f'GreenKid-MV-{version}-source.zip'
     with zipfile.ZipFile(source_zip, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for p in paths:
