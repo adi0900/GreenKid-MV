@@ -1,0 +1,77 @@
+[
+  {
+    "name": "Gommon",
+    "version": "2.8.1.2",
+    "authors": "GreemDev",
+    "copyright": "",
+    "license": "",
+    "repository": {
+      "type": "Git",
+      "url": "https://github.com/GreemDev/Gommon",
+      "commit": "222084874ac473e02f27faeb10e540f926702976"
+    },
+    "project": "",
+    "license_files": [
+      "content/LICENSE",
+      "contentFiles/any/net9.0/LICENSE"
+    ]
+  },
+  {
+    "name": "Humanizer.Core",
+    "version": "3.0.10",
+    "authors": "Claire Novotny, Mehdi Khalili",
+    "copyright": "Copyright (c) .NET Foundation and Contributors",
+    "license": "MIT",
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/Humanizr/Humanizer",
+      "commit": "90f0cb1d7427635f38b46350bb1dc5fca2164f2d"
+    },
+    "project": "https://github.com/Humanizr/Humanizer",
+    "license_files": [],
+    "additional_license_source": "https://raw.githubusercontent.com/Humanizr/Humanizer/90f0cb1d7427635f38b46350bb1dc5fca2164f2d/license.txt",
+    "component_license_sources": [
+      "https://raw.githubusercontent.com/Humanizr/Humanizer/90f0cb1d7427635f38b46350bb1dc5fca2164f2d/src/Humanizer/Bytes/LICENSE",
+      "https://raw.githubusercontent.com/Humanizr/Humanizer/90f0cb1d7427635f38b46350bb1dc5fca2164f2d/src/Humanizer/Inflections/LICENSE"
+    ]
+  },
+  {
+    "name": "Microsoft.IO.RecyclableMemoryStream",
+    "version": "3.0.1",
+    "authors": "Microsoft",
+    "copyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+    "license": "MIT",
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/Microsoft/Microsoft.IO.RecyclableMemoryStream",
+      "commit": "e29a28387da9018fa9605a1dcb3f7a0435aa9974"
+    },
+    "project": "https://github.com/Microsoft/Microsoft.IO.RecyclableMemoryStream",
+    "license_files": [],
+    "additional_license_source": "https://github.com/Microsoft/Microsoft.IO.RecyclableMemoryStream/blob/e29a28387da9018fa9605a1dcb3f7a0435aa9974/LICENSE"
+  },
+  {
+    "name": "MsgPack.Cli",
+    "version": "1.0.1",
+    "authors": "FUJIWARA, Yusuke",
+    "copyright": "Copyright 2010-2016 FUJIWARA, Yusuke, all rights reserved.",
+    "license": "",
+    "repository": {},
+    "project": "https://github.com/msgpack/msgpack-cli",
+    "license_files": [],
+    "additional_license_source": "https://github.com/msgpack/msgpack-cli/blob/1.0.1/LICENSE.txt"
+  },
+  {
+    "name": "System.CodeDom",
+    "version": "4.4.0",
+    "authors": "Microsoft",
+    "copyright": "\u00a9 Microsoft Corporation.  All rights reserved.",
+    "license": "",
+    "repository": {},
+    "project": "https://dot.net/",
+    "license_files": [
+      "LICENSE.TXT",
+      "THIRD-PARTY-NOTICES.TXT"
+    ]
+  }
+]

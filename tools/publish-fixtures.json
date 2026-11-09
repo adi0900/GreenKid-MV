@@ -1,0 +1,5 @@
+{
+  "dm/tools/fuzz/corpus/nso/huge-segment.nso": "49c8340e665cd751edab9adf458236deff00a2e7d8b8bf10ee83071548119f7b",
+  "dm/tools/fuzz/corpus/nso/short-segment.nso": "8bd78edcfb347c5518c9aa3cd39e0792ea7870d5fb06abfbfa9e689d08d4f381",
+  "dm/tools/fuzz/corpus/romfs/magic-only.img": "4bd5ece2eb6167af9d8d96ddddaeefc2b6b230725db3c5b30cb917d36f347824"
+}

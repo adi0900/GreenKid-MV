@@ -11,7 +11,7 @@ GreenKid-MV packages other developers’ native-execution work with a small Mac 
 
 ## Status
 
-**Experimental preview.** This distribution is focused on the Switch 2 Ocarina of Time dump. It pins the engine to low requirement 60FPS, low ram spent spec.
+**Experimental preview.** This distribution is focused on the Switch 2 Ocarina of Time dump with update `v131072`. It pins the engine to `e9c2f7e1f19a8c74e90283e892b8973173eabd61`, aiming for 60 FPS with low RAM use; it does not silently track upstream updates.
 
 The engine includes upstream shader-synchronization corrections, frame buffering and resolution presets. Sustained 60 FPS and lighting correctness have **not been certified for this GreenKid-MV release**. Your hardware, game dump and area affect the result. The local Zelda performance investigation remains separate from the public launcher.
 
