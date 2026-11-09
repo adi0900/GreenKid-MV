@@ -13,7 +13,11 @@ GreenKid-MV packages other developers’ native-execution work with a small Mac 
 
 **Experimental preview.** This distribution is focused on the Switch 2 Ocarina of Time dump with update `v131072`. Since 0.2.0 the engine is upstream nxnative's latest code (`seedds/nxnative` main `2a6f9b32`) plus GreenKid-MV's additions, pinned as `greenkid-v2-73463569c5e7`; it does not silently track upstream updates.
 
-It includes upstream's Ocarina of Time lighting, terrain and stability fixes, MetalFX for the game's own upscaler, the Normal / Potato resolution presets and settings tuned to hold 60 FPS without overheating a fanless Mac (see [What's new in 0.2.0](#whats-new-in-020)). Sustained 60 FPS and lighting correctness have **not been certified for this GreenKid-MV release**. Your hardware, game dump and area affect the result. The local Zelda performance investigation remains separate from the public launcher.
+It includes upstream's Ocarina of Time lighting, terrain and stability fixes, MetalFX for the game's own upscaler, the Normal / Potato resolution presets and settings tuned to hold 60 FPS without overheating a fanless Mac (see [What's new in 0.2.0](#whats-new-in-020)). In the maintainer's own play-testing on a fanless MacBook Air, 0.2.0 runs smoothly with the lighting flicker gone. It is still a preview: results on other Macs, dumps and areas have not been certified. The local Zelda performance investigation remains separate from the public launcher.
+
+## Download
+
+**Latest: [GreenKid-MV 0.2.0-preview](https://github.com/adi0900/GreenKid-MV/releases/tag/v0.2.0-preview)** (Apple silicon). Get `GreenKid-MV-0.2.0-preview-macOS-arm64.zip` from that page, then follow [Setup and running](#setup-and-running). The download is the builder only: no game files are included.
 
 ## What's new in 0.2.0
 
@@ -67,7 +71,7 @@ It should end with `Prerequisite executables found.` Otherwise it names what is 
 
 ### 3. Get GreenKid-MV
 
-1. From this project's [Releases](https://github.com/adi0900/GreenKid-MV/releases), download `GreenKid-MV-<version>-macOS-arm64.zip` (and `SHA256SUMS.txt` if you want to check the download with `shasum -a 256 -c SHA256SUMS.txt`).
+1. From this project's [Releases](https://github.com/adi0900/GreenKid-MV/releases), download the newest `GreenKid-MV-<version>-macOS-arm64.zip` (currently [0.2.0-preview](https://github.com/adi0900/GreenKid-MV/releases/tag/v0.2.0-preview)) (and `SHA256SUMS.txt` if you want to check the download with `shasum -a 256 -c SHA256SUMS.txt`).
 2. Unzip it and move **GreenKid-MV.app** to **Applications**.
 3. The first time, **right-click the app → Open → Open**. Preview builds are not notarized, so a normal double-click is blocked once. If macOS still refuses, open **System Settings → Privacy & Security** and choose **Open Anyway**.
 
@@ -191,7 +195,7 @@ The original developers deserve the credit for the runtime, graphics and game su
 | People / project | Contribution |
 |---|---|
 | [seedds / nxnative](https://github.com/seedds/nxnative) | Base project, host/runtime, Metal integration, rewriter and continuing fixes. Original MIT copyright retained. |
-| [cheemu21 / kid-with-sword-remake](https://github.com/cheemu21/kid-with-sword-remake) | The direct fork used here: Ocarina-specific integration, presets, upscaling work and documented Mac/iPhone experiments. |
+| [cheemu21 / kid-with-sword-remake](https://github.com/cheemu21/kid-with-sword-remake) | The fork GreenKid-MV 0.1.0 was built on: Ocarina-specific integration, presets, upscaling work and documented Mac/iPhone experiments. Its Ocarina features are carried forward onto upstream main in 0.2.0. |
 | Xipzer | Performance work credited in the imported history and fork documentation. |
 | Pedro Nascimento | Imported graphics-scale work and other contributions, as recorded in the upstream history. |
 | [All recorded upstream contributors](AUTHORS.md) | The complete author list from the pinned source snapshot, with example commit links. |
