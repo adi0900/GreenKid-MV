@@ -13,15 +13,15 @@ GreenKid-MV packages other developers’ native-execution work with a small Mac 
 
 ## Status
 
-**Experimental preview.** This distribution is focused on the Switch 2 Ocarina of Time dump with update `v131072`. Since 0.2.1 the engine is upstream nxnative's code as of 10 Nov 2026 (`seedds/nxnative` main `ab41d6a1`) plus GreenKid-MV's additions, pinned as `greenkid-v2.1-564653c85030`; it does not silently track upstream updates.
+**Experimental preview.** This distribution is focused on the Switch 2 Ocarina of Time dump with update `v131072`. Since 0.3.0 the engine is upstream nxnative's code as of 10 Nov 2026 (`seedds/nxnative` main `ab41d6a1`) plus GreenKid-MV's additions, pinned as `greenkid-v2.1-564653c85030`; it does not silently track upstream updates.
 
-It includes upstream's Ocarina of Time lighting, terrain and stability fixes, MetalFX for the game's own upscaler, the Normal / Potato resolution presets and settings tuned to hold 60 FPS without overheating a fanless Mac (see [What's new in 0.2.1](#whats-new-in-021)). In the maintainer's own play-testing on a fanless MacBook Air, 0.2.0 runs smoothly with the lighting flicker gone. It is still a preview: results on other Macs, dumps and areas have not been certified. The local Zelda performance investigation remains separate from the public launcher.
+It includes upstream's Ocarina of Time lighting, terrain and stability fixes, MetalFX for the game's own upscaler, the Normal / Potato resolution presets and settings tuned to hold 60 FPS without overheating a fanless Mac (see [What's new in 0.3.0](#whats-new-in-030)). In the maintainer's own play-testing on a fanless MacBook Air, 0.2.0 ran smoothly with the lighting flicker gone; 0.3.0 is in that same testing now. It is still a preview: results on other Macs, dumps and areas have not been certified. The local Zelda performance investigation remains separate from the public launcher.
 
 ## Download
 
-**Latest: [GreenKid-MV 0.2.1-preview](https://github.com/adi0900/GreenKid-MV/releases/tag/v0.2.1-preview)** (Apple silicon). Get `GreenKid-MV-0.2.1-preview-macOS-arm64.zip` from that page, then follow [Setup and running](#setup-and-running). The download is the builder only: no game files are included.
+**Latest: [GreenKid-MV 0.3.0-preview](https://github.com/adi0900/GreenKid-MV/releases/tag/v0.3.0-preview)** (Apple silicon). Get `GreenKid-MV-0.3.0-preview-macOS-arm64.zip` from that page, then follow [Setup and running](#setup-and-running). The download is the builder only: no game files are included.
 
-## What's new in 0.2.1
+## What's new in 0.3.0
 
 Prompted by [issue #1](https://github.com/adi0900/GreenKid-MV/issues/1): the engine moved to upstream main `ab41d6a1` (45 more upstream commits).
 
@@ -31,6 +31,7 @@ Prompted by [issue #1](https://github.com/adi0900/GreenKid-MV/issues/1): the eng
 - **Smoother camera:** Hyrule Field's 230 ms camera-turn hitch is down to 39 ms, and 41 more pipelines are prepared ahead, so a first visit to Death Mountain Trail no longer stalls.
 - **Faster GPU work:** quicker upscaler network math and texture lookups, a host built at -O2, and fullscreen on a ProMotion screen holding 60 FPS.
 - **Easier setup:** the .NET SDK is no longer needed.
+- **New icon:** the GreenKid-MV green hat, for the builder app and this page.
 - GreenKid-MV's own additions carry over: resolution presets, game-file overlays, MetalFX for the game's upscaler, the GPU-hang watchdog and the CPU savings. GreenKid's older copies of #1920, #1876 and #1917 are replaced by upstream's work.
 
 ## What's new in 0.2.0
@@ -84,7 +85,7 @@ It should end with `Prerequisite executables found.` Otherwise it names what is 
 
 ### 3. Get GreenKid-MV
 
-1. From this project's [Releases](https://github.com/adi0900/GreenKid-MV/releases), download the newest `GreenKid-MV-<version>-macOS-arm64.zip` (currently [0.2.1-preview](https://github.com/adi0900/GreenKid-MV/releases/tag/v0.2.1-preview)) (and `SHA256SUMS.txt` if you want to check the download with `shasum -a 256 -c SHA256SUMS.txt`).
+1. From this project's [Releases](https://github.com/adi0900/GreenKid-MV/releases), download the newest `GreenKid-MV-<version>-macOS-arm64.zip` (currently [0.3.0-preview](https://github.com/adi0900/GreenKid-MV/releases/tag/v0.3.0-preview)) (and `SHA256SUMS.txt` if you want to check the download with `shasum -a 256 -c SHA256SUMS.txt`).
 2. Unzip it and move **GreenKid-MV.app** to **Applications**.
 3. The first time, **right-click the app → Open → Open**. Preview builds are not notarized, so a normal double-click is blocked once. If macOS still refuses, open **System Settings → Privacy & Security** and choose **Open Anyway**.
 
@@ -176,7 +177,7 @@ Ignore rules do not remove files already committed to Git. This snapshot starts 
 
 - This is a builder, not a prebuilt copy of Zelda. Each player builds from their own files.
 - Performance and visual issues can still come from the underlying engine. There is no guarantee of 60 FPS or glitch-free lighting.
-- A fresh machine needs the development tools above; this is not a self-contained replacement for Xcode. Since 0.2.1 the .NET SDK is no longer needed: upstream ships the shader translator and extractor as native programs.
+- A fresh machine needs the development tools above; this is not a self-contained replacement for Xcode. Since 0.3.0 the .NET SDK is no longer needed: upstream ships the shader translator and extractor as native programs.
 - The first local build is lengthy. Do not run a compiler-heavy build while judging gameplay performance.
 - The 13 GiB Ocarina memory cap is a conservative local setting, not a guarantee against memory pressure in every area. The private `runtime.env` records the selected settings.
 - Upstream gameplay screenshots are omitted from this publication snapshot. Some historical documentation still refers to that omitted gallery.

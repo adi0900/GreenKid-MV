@@ -275,7 +275,7 @@ Names from the author lines and co-author trailers of the seedds/nxnative commit
 - yangyidong
 - ycarogabriel-lgtm
 
-## Contributors to the engine changes in 0.2.1
+## Contributors to the engine changes in 0.3.0
 
 Credited in the co-author trailers of the upstream commits between `2a6f9b32` and `ab41d6a1`:
 
