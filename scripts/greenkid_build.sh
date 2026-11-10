@@ -9,7 +9,6 @@ SUPPORT_DIR="${GREENKID_SUPPORT_DIR:-$HOME/Library/Application Support/GreenKid-
 doctor() {
   [[ "$(uname -m)" == arm64 ]] || { echo 'Apple silicon is required.'; return 1; }
   command -v uv >/dev/null || { echo 'Install the prerequisite tools shown in the README (uv is missing).'; return 1; }
-  command -v dotnet >/dev/null || { echo 'The .NET SDK is missing. See the README.'; return 1; }
   xcrun --find metal >/dev/null 2>&1 || { echo 'Install Xcode 27.2 and its Metal Toolchain, then open Xcode once.'; return 1; }
   for tool in xcodegen zstd glslangValidator; do
     command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool. See the README."; return 1; }

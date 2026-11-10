@@ -26,8 +26,8 @@ int main(void) { @autoreleasepool {
     [src writeToFile:in atomically:NO encoding:NSUTF8StringEncoding error:nil];
     // fetch_clamp alone, as test_dmsh_fetch_clamp.py takes it: dmsh_build.py is not imported whole
     NSTask *py = [NSTask new]; py.executableURL = [NSURL fileURLWithPath:@"/usr/bin/env"];
-    NSString *prog = @"import ast, re, sys; t = ast.parse(open('../tools/dmsh_build.py').read()); s = {'re': re}; "
-        "exec(compile(ast.Module(body=[n for n in t.body if isinstance(n, ast.FunctionDef) and n.name == 'fetch_clamp'], type_ignores=[]), 'dmsh_build.py', 'exec'), s); "
+    NSString *prog = @"import ast, re, sys; t = ast.parse(open('../tools/dmsh_rewrite.py').read()); s = {'re': re}; "
+        "exec(compile(ast.Module(body=[n for n in t.body if isinstance(n, ast.FunctionDef) and n.name == 'fetch_clamp'], type_ignores=[]), 'dmsh_rewrite.py', 'exec'), s); "
         "open(sys.argv[2], 'w').write(s['fetch_clamp'](open(sys.argv[1]).read()))";
     py.arguments = @[@"python3", @"-c", prog, in, out];
     if (![py launchAndReturnError:&e]) { fprintf(stderr, "fetch_clamp: %s\n", e.localizedDescription.UTF8String); return 1; }

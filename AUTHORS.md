@@ -274,3 +274,20 @@ Names from the author lines and co-author trailers of the seedds/nxnative commit
 - uncraftablexd
 - yangyidong
 - ycarogabriel-lgtm
+
+## Contributors to the engine changes in 0.2.1
+
+Credited in the co-author trailers of the upstream commits between `2a6f9b32` and `ab41d6a1`:
+
+- Adem Rosic
+- Roan de Graaf
+- TheGoldfish11
+- akratch
+- dean0396
+- ishtiaq156
+- maxzloty
+- padsiwono
+- relay4
+- robandstuff
+- sleepyeyedjoe
+- sn0wst0rm

@@ -1,4 +1,4 @@
-"""A texel fetch past the edge of a sampled 2D texture (dmsh_build.py fetch_clamp): it reads the nearest texel inside, and fetches of other kinds stay as they were."""
+"""A texel fetch past the edge of a sampled 2D texture (dmsh_rewrite.py fetch_clamp): it reads the nearest texel inside, and fetches of other kinds stay as they were."""
 import ast
 from pathlib import Path
 import re
@@ -11,19 +11,8 @@ TOOLS = Path(__file__).resolve().parents[1] / 'tools'
 sys.path.insert(0, str(TOOLS))
 import dmsh_abi
 
-
-def builder_functions(names):
-    # Isolate the functions from the builder's CLI/profile initialization (as test_dmsh_reflect.py), with the slot bases decode_tex reads.
-    tree = ast.parse((TOOLS / 'dmsh_build.py').read_text())
-    selected = [n for n in tree.body if (isinstance(n, ast.FunctionDef) and n.name in names)
-                or (isinstance(n, ast.Assign) and any(isinstance(t, ast.Tuple) and any(isinstance(e, ast.Name) and e.id == 'TEX_BASE' for e in t.elts) for t in n.targets))]
-    ns = {'re': re, 'abi': dmsh_abi}
-    exec(compile(ast.Module(body=selected, type_ignores=[]), str(TOOLS / 'dmsh_build.py'), 'exec'), ns)
-    return ns
-
-
-NS = builder_functions({'fetch_clamp', 'fetch1d_names', 'decode_tex'})
-fetch_clamp, fetch1d_names = NS['fetch_clamp'], NS['fetch1d_names']
+from dmsh_rewrite import fetch_clamp   # noqa: E402
+from dmsh_reflect import fetch1d_names   # noqa: E402
 
 HEAD = '''#include <metal_stdlib>
 using namespace metal;
