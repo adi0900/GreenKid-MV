@@ -52,6 +52,18 @@ def main():
         'NSDownloadsFolderUsageDescription': 'Build a private local game from the dump folder you choose.',
         'NSDocumentsFolderUsageDescription': 'Build a private local game from the dump folder you choose.'
     }
+    icon_src = ROOT / 'launcher/mac/AppIcon.png'   # the GreenKid-MV hat: an original icon, no game artwork
+    if icon_src.exists():
+        iconset = dist / 'AppIcon.iconset'
+        shutil.rmtree(iconset, ignore_errors=True); iconset.mkdir()
+        for size in (16, 32, 128, 256, 512):
+            for scale in (1, 2):
+                name = f'icon_{size}x{size}{"@2x" if scale == 2 else ""}.png'
+                run('sips', '-z', size * scale, size * scale, icon_src, '--out', iconset / name)
+        resources.mkdir(parents=True, exist_ok=True)
+        run('iconutil', '-c', 'icns', iconset, '-o', resources / 'AppIcon.icns')
+        shutil.rmtree(iconset)
+        info['CFBundleIconFile'] = 'AppIcon'
     (contents / 'Info.plist').write_bytes(plistlib.dumps(info))
     (contents / 'PkgInfo').write_text('APPL????')
     run('codesign', '--force', '--sign', '-', app)

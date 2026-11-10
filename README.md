@@ -1,3 +1,5 @@
+<p align="center"><img src="launcher/mac/AppIcon.png" alt="GreenKid-MV icon: a green hat" width="160"></p>
+
 # GreenKid-MV - (Experimental Work)
 
 A local Mac game builder based on **nxnative**, with the Ocarina of Time work from **kid-with-sword-remake**. Choose your own game dump, build it on your Mac, and keep the result on your machine.
