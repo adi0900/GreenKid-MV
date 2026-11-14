@@ -64,7 +64,13 @@ Follow these steps in order. Steps 1–3 are one-time setup. You need your own g
 - **macOS 26.6 or later.** (The builder window opens on macOS 15+, but building and playing need 26.6.)
 - **About 100 GB of free disk space** for your game file, the build, its caches and the finished game app.
 
-### 2. Install the tools (once)
+### 2. Get GreenKid-MV
+
+1. From this project's [Releases](https://github.com/adi0900/GreenKid-MV/releases), download the newest `GreenKid-MV-<version>-macOS-arm64.zip` (currently [0.3.0-preview](https://github.com/adi0900/GreenKid-MV/releases/tag/v0.3.0-preview)) (and `SHA256SUMS.txt` if you want to check the download with `shasum -a 256 -c SHA256SUMS.txt`).
+2. Unzip it and move **GreenKid-MV.app** to **Applications**.
+3. The first time, **right-click the app → Open → Open**. Preview builds are not notarized, so a normal double-click is blocked once. If macOS still refuses, open **System Settings → Privacy & Security** and choose **Open Anyway**.
+
+### 3. Install the tools (once)
 
 1. Install **Xcode 27.2** from the App Store or Apple's developer site. Open it once and let it finish its first-time setup.
 2. Install [Homebrew](https://brew.sh) if you don't have it.
@@ -83,11 +89,6 @@ bash /Applications/GreenKid-MV.app/Contents/Resources/engine/scripts/greenkid_bu
 
 It should end with `Prerequisite executables found.` Otherwise it names what is missing.
 
-### 3. Get GreenKid-MV
-
-1. From this project's [Releases](https://github.com/adi0900/GreenKid-MV/releases), download the newest `GreenKid-MV-<version>-macOS-arm64.zip` (currently [0.3.0-preview](https://github.com/adi0900/GreenKid-MV/releases/tag/v0.3.0-preview)) (and `SHA256SUMS.txt` if you want to check the download with `shasum -a 256 -c SHA256SUMS.txt`).
-2. Unzip it and move **GreenKid-MV.app** to **Applications**.
-3. The first time, **right-click the app → Open → Open**. Preview builds are not notarized, so a normal double-click is blocked once. If macOS still refuses, open **System Settings → Privacy & Security** and choose **Open Anyway**.
 
 ### 4. Prepare your game folder
 
